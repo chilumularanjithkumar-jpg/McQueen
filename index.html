@@ -407,6 +407,27 @@ a,.link{color:#8A6F37}
 @media print{ .inv{padding:0} .inv.slip{font-size:13px} @page{margin:12mm} }
 .inv table.kvt.two td:nth-child(1),.inv table.kvt.two td:nth-child(3){width:16%;white-space:nowrap}
 .inv table.kvt.two td:nth-child(2){width:38%}
+
+/* ---------- attendance grid ---------- */
+.brushes{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 6px}
+.brushes .br{all:unset;cursor:pointer;display:flex;align-items:center;gap:8px;padding:8px 14px 8px 8px;border:1.5px solid var(--line);border-radius:12px;background:var(--surface);font-weight:600;font-size:14px}
+.brushes .br b{display:grid;place-items:center;width:24px;height:24px;border-radius:6px;font-size:12px}
+.brushes .br small{font-weight:500;color:var(--muted);font-size:11.5px}
+.brushes .br[aria-checked="true"]{border-color:var(--ink);box-shadow:0 0 0 3px var(--gold-soft);background:#fff}
+.br-A b{background:var(--rose);color:#fff} .br-U b{background:var(--rose-soft);color:var(--rose)} .br-L b{background:var(--plum-soft);color:var(--ink)}
+.br-S b{background:var(--gold-soft);color:#7A5A1E} .br-O b{background:#EEE9E1;color:var(--muted)} .br-H b{background:#E3ECF6;color:#2C5A8A}
+.brush-now{margin:4px 0 12px;font-size:13.5px;color:var(--muted)} .brush-now .att{width:20px;height:20px;vertical-align:middle}
+.attg td.ac{padding:3px 1px}
+.att.att-p0{background:transparent;border:1px solid var(--line);color:transparent}
+.att.att-p0:hover:not(:disabled){border-color:var(--ink);background:var(--gold-soft)}
+.att.att-none{background:transparent;color:var(--muted);cursor:default}
+.att.att-p0.fut{opacity:.5;border-style:dashed}
+.att-L{background:var(--plum-soft);color:var(--ink)}
+.attg th.today{color:var(--ink);background:var(--gold-soft);border-radius:6px}
+.attg td.today{background:var(--gold-soft)}
+.attg th.we{color:var(--rose)}
+.att-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;font-size:12.5px;color:var(--muted)}
+.att-legend span{display:flex;align-items:center;gap:6px} .att-legend .att{width:18px;height:18px;font-size:10px;font-style:normal}
 </style>
 </head>
 <body>
@@ -2912,22 +2933,31 @@ function empDlg(e){
 
 PAGES.attendance = () => {
   const ym = state.attKey, dim = daysIn(ym), staff = DB.employees.filter(e => activeIn(e, ym)).sort((a,b)=>a.name.localeCompare(b.name));
-  const run = runFor(ym), locked = run && run.status !== 'Draft';
-  const days = Array.from({length:dim}, (_,i) => i+1);
-  return header('Attendance', 'Mark exceptions only: every day counts as present unless you change it', {noNew:true, extra: monthSwitch('attKey')}) + `
+  const run = runFor(ym), locked = run && run.status !== 'Draft', today = todayISO(), offs = (DB.settings.weekOff || '').split(',').filter(Boolean).map(Number);
+  const days = Array.from({length:dim}, (_,i) => i+1), iso = d => ym + '-' + pad(d);
+  if(state.brush === 'P') state.brush = 'A';
+  const BR = Object.entries(ATT).filter(([c]) => c !== 'P');
+  return header('Attendance', 'Everyone is present by default. Mark only the days someone was absent, on leave, off or on a holiday.', {noNew:true, extra: monthSwitch('attKey')}) + `
   ${locked ? notice(`Payroll for ${kName(ym)} is ${run.status.toLowerCase()}, so attendance for the month is locked.`) : ''}
-  <section class="panel"><div class="panel-head"><div><h2>${kName(ym)}</h2><p>Pick a mark, then click the days to apply it. Click a day again to set it back to present.</p></div>
-    <div class="chips">${Object.entries(ATT).map(([c,v]) => `<button data-act="brush" data-c="${c}" aria-pressed="${state.brush===c}"><b class="att att-${c}">${c}</b> ${v.label}</button>`).join('')}</div></div>
-    ${staff.length ? `<div class="tbl-wrap"><table class="attg"><thead><tr><th>Employee</th>${days.map(d => `<th class="${[0,6].includes(dow(ym,d))?'we':''}">${'SMTWTFS'[dow(ym,d)]}<br>${d}</th>`).join('')}<th class="r">Paid</th><th class="r">Unpaid</th><th class="r" style="min-width:76px">OT hours</th></tr></thead><tbody>
-      ${staff.map(e => { const s = attSummary(e, ym); return `<tr><td style="white-space:nowrap">${esc(e.name)}</td>${days.map(d => { const c = dayCode(e, ym, d); return `<td class="ac">${c === '-' ? '<span class="mini">–</span>' : `<button class="att att-${c}" data-act="${locked ? '' : 'mark'}" data-e="${e.id}" data-d="${d}" ${locked ? 'disabled' : ''} title="${ATT[c].label}, ${d} ${MON[+ym.slice(5)-1]}">${c}</button>`}</td>`; }).join('')}
-        <td class="r num">${dim - s.unpaid - s.notEmployed}</td><td class="r num ${s.unpaid ? 'out' : ''}">${s.unpaid + s.notEmployed}</td>
-        <td class="r"><input type="number" min="0" step="0.5" value="${s.ot || ''}" data-change="ot" data-e="${e.id}" ${locked ? 'disabled' : ''} style="width:64px;text-align:right;border:1px solid var(--line);border-radius:6px;padding:4px 6px"></td></tr>`; }).join('')}
-    </tbody></table></div>` : empty('No staff for this month', 'Add employees first.')}
-    <div class="row-btns no-print" style="margin-top:14px"><button class="btn ghost sm" data-act="weekOff">Weekly off day: ${(DB.settings.weekOff || '').split(',').filter(Boolean).map(x => ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][x]).join(', ') || 'none'}</button>
-      ${!locked && staff.length ? `<button class="btn ghost sm" data-act="clearAtt">Reset month to present</button>` : ''}<button class="btn ghost sm" data-act="print">${ic('print',15)}Print</button></div></section>
-  <p class="help">Absent (A) and unpaid leave (U) reduce pay at 1/${DB.settings.payDays} of the monthly ${DB.settings.deductBasis === 'basic' ? 'basic' : 'gross'} per day. Annual leave, sick leave, weekly off and holidays are paid. Under UAE law sick leave beyond 15 days a year is half or unpaid: mark those days U where needed.</p>`;
+  <section class="panel"><div class="panel-head"><div><h2>${kName(ym)}</h2>
+      <p>${locked ? 'Locked.' : `<b>Step 1</b> pick what to mark. <b>Step 2</b> click the days. Click a marked day again to clear it back to present.`}</p></div></div>
+    ${locked ? '' : `<div class="brushes" role="radiogroup" aria-label="Mark days as">${BR.map(([c,v]) => `<button role="radio" data-act="brush" data-c="${c}" aria-checked="${state.brush===c}" class="br br-${c}"><b>${c}</b>${v.label}<small>${v.paid ? 'paid' : 'not paid'}</small></button>`).join('')}</div>
+      <p class="brush-now">Now marking: <span class="att att-${state.brush}">${state.brush}</span> <b>${ATT[state.brush].label}</b> — click the days in the grid.</p>`}
+    ${staff.length ? `<div class="tbl-wrap"><table class="attg"><thead><tr><th>Employee</th>${days.map(d => `<th class="${offs.includes(dow(ym,d)) ? 'we' : ''} ${iso(d) === today ? 'today' : ''}">${'SMTWTFS'[dow(ym,d)]}<br>${d}</th>`).join('')}
+        <th class="r">Worked</th><th class="r">Off / leave</th><th class="r">Unpaid</th><th class="r">Not joined</th><th class="r">Paid days</th><th class="r" style="min-width:76px">OT hours</th></tr></thead><tbody>
+      ${staff.map(e => { const s = attSummary(e, ym);
+        return `<tr><td style="white-space:nowrap"><b>${esc(e.name)}</b><br><span class="mini">${esc(e.title || '')}</span></td>${days.map(d => { const c = dayCode(e, ym, d), fut = iso(d) > today;
+          if(c === '-') return `<td class="ac"><span class="att att-none" title="Not employed on ${d} ${MON[+ym.slice(5)-1]}">–</span></td>`;
+          return `<td class="ac ${iso(d) === today ? 'today' : ''}"><button class="att ${c === 'P' ? 'att-p0' : 'att-' + c} ${fut ? 'fut' : ''}" data-act="${locked ? '' : 'mark'}" data-e="${e.id}" data-d="${d}" ${locked ? 'disabled' : ''} title="${ATT[c].label}, ${d} ${MON[+ym.slice(5)-1]}${locked ? '' : c === 'P' ? ' – click to mark ' + ATT[state.brush].label.toLowerCase() : ' – click to clear'}">${c === 'P' ? '' : c}</button></td>`; }).join('')}
+          <td class="r num">${s.P}</td><td class="r num">${s.O + s.H + s.L + s.S}</td><td class="r num ${s.unpaid ? 'out' : ''}">${s.unpaid || '–'}</td><td class="r num">${s.notEmployed || '–'}</td><td class="r num"><b>${dim - s.unpaid - s.notEmployed}</b></td>
+          <td class="r"><input type="number" min="0" step="0.5" value="${s.ot || ''}" placeholder="0" data-change="ot" data-e="${e.id}" ${locked ? 'disabled' : ''} style="width:64px;text-align:right;border:1px solid var(--line);border-radius:6px;padding:4px 6px"></td></tr>`; }).join('')}
+    </tbody></table></div>
+    <div class="att-legend"><span><i class="att att-p0"></i> Present (empty = present)</span>${BR.map(([c,v]) => `<span><i class="att att-${c}">${c}</i> ${v.label}</span>`).join('')}<span><i class="att att-none">–</i> Not employed yet</span><span><i class="att att-p0 fut"></i> Future day</span></div>`
+      : empty('No staff for this month', 'Add employees first.')}
+    <div class="row-btns no-print" style="margin-top:14px"><button class="btn ghost sm" data-act="weekOff">Weekly off day: ${offs.map(x => ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][x]).join(', ') || 'none set'}</button>
+      ${!locked && staff.length ? `<button class="btn ghost sm" data-act="clearAtt">Clear all marks this month</button>` : ''}<button class="btn ghost sm" data-act="print">${ic('print',15)}Print</button></div></section>
+  <p class="help">Paid days = days in the month − unpaid days − days before joining. Absent (A) and unpaid leave (U) are deducted at 1/${DB.settings.payDays} of the monthly ${DB.settings.deductBasis === 'basic' ? 'basic' : 'gross'} per day. Annual leave, sick leave, weekly off and holidays are paid. Under UAE law sick leave beyond 15 days a year is half or unpaid: mark those days U where needed.</p>`;
 };
-
 PAGES.payroll = () => {
   const ym = state.payKey, run = runFor(ym), t = run ? runTotals(run) : null;
   const ed = run && run.status === 'Draft';
@@ -3022,7 +3052,7 @@ Object.assign(ACT, {
     invalidate(); saveLocal(); scheduleSave(); openDlg(empDlg(e), 'wide'); toast(`Advance of ${money(amt)} recorded, to be recovered through payroll`); },
   brush: d => { state.brush = d.c; render(); },
   mark: d => { if(!guardWrite()) return; const e = emp(d.e), ym = state.attKey, cur = dayCode(e, ym, +d.d); setDay(e, ym, +d.d, cur === state.brush ? 'P' : state.brush); saveLocal(); scheduleSave(); render(); },
-  clearAtt: () => { if(!confirmBox(`Set every day in ${kName(state.attKey)} back to present?`)) return; DB.employees.forEach(e => { if(DB.attendance[e.id]?.[state.attKey]) DB.attendance[e.id][state.attKey].days = ''; }); commit('Month reset to present'); },
+  clearAtt: () => { if(!confirmBox(`Clear every mark in ${kName(state.attKey)} so all days are present again?`)) return; DB.employees.forEach(e => { if(DB.attendance[e.id]?.[state.attKey]) DB.attendance[e.id][state.attKey].days = ''; }); commit('Month reset to present'); },
   weekOff: () => { const cur = (DB.settings.weekOff || '').split(',').filter(Boolean);
     openDlg(`<form class="dlg" data-form="weekoff"><h2>Weekly off day</h2><p>These days are marked as weekly off (paid) for everyone unless changed on the grid. Leave all unticked if staff take rotating days off.</p>
       <div class="chips">${['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((n,i) => `<label class="tag" style="padding:8px 12px;cursor:pointer"><input type="checkbox" class="chk" name="d${i}" ${cur.includes(String(i)) ? 'checked' : ''}> ${n}</label>`).join('')}</div>
