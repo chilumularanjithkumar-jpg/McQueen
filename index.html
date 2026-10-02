@@ -384,6 +384,29 @@ td:first-child{white-space:nowrap}
 .badge-n{background:var(--gold);color:#0D0D0C}
 a,.link{color:#8A6F37}
 .rep .rrow a,.rep td a{color:#8A6F37}
+
+/* ---------- printed documents ---------- */
+.inv h4{font:600 13px var(--sans);text-transform:uppercase;letter-spacing:.06em;color:#555;margin:16px 0 4px}
+.inv .words{font-style:italic;margin:6px 0 0;color:#333}
+.inv .lead{margin:10px 0;font-size:14.5px}
+.inv table.small{font-size:12.5px;margin:8px 0}
+.inv table.small th{padding:6px;font-size:11.5px}
+.inv table.small td{padding:5px 6px}
+.inv tr.tot td{font-weight:700;border-top:2px solid #222}
+.inv .doc-meta{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;margin:6px 0 10px}
+.inv .party{min-width:220px}
+.inv table.kvt{width:auto;margin:6px 0;font-size:13.5px}
+.inv table.kvt td{border:0;padding:3px 10px 3px 0}
+.inv table.kvt td:nth-child(odd){color:#666}
+.inv table.kvt.two{width:100%}
+.inv .sigs{display:flex;gap:28px;margin-top:46px}
+.inv .sigs div{flex:1;font-size:12.5px;color:#444;text-align:center}
+.inv .sigs span{display:block;border-top:1px solid #333;margin-bottom:6px}
+.inv.wide{max-width:none}
+.inv .reg td,.inv .reg th{white-space:nowrap}
+@media print{ .inv{padding:0} .inv.slip{font-size:13px} @page{margin:12mm} }
+.inv table.kvt.two td:nth-child(1),.inv table.kvt.two td:nth-child(3){width:16%;white-space:nowrap}
+.inv table.kvt.two td:nth-child(2){width:38%}
 </style>
 </head>
 <body>
@@ -625,7 +648,9 @@ const TYPES = {
   PAY:  {name:'Supplier payment', prefix:'PAY', verb:'Payment'},
   TRF:  {name:'Transfer',         prefix:'TRF', verb:'Transfer'},
   JV:   {name:'Journal entry',    prefix:'JV',  verb:'Journal'},
-  NOTE: {name:'Note',             prefix:'NTE', verb:'Note'}
+  NOTE: {name:'Note',             prefix:'NTE', verb:'Note'},
+  CN:   {name:'Credit note',      prefix:'CRN', verb:'Credit note'},
+  DN:   {name:'Debit note',       prefix:'DBN', verb:'Debit note'}
 };
 const ACC_TYPES = {asset:'Assets', liability:'Liabilities', equity:'Equity', income:'Income', expense:'Expenses'};
 const ROLE_LABEL = {cash:'Cash', bank:'Bank', ar:'Receivables', ap:'Payables', vatin:'VAT input', vatout:'VAT output', obe:'Opening balances', re:'Retained earnings', '':''};
@@ -697,7 +722,7 @@ function freshDB(s){
       biz:'McQueen Ladies Center', legal:'', trn:'', address:'', phone:'', email:'', cur:'AED',
       vatOn:false, vatRate:5, emirate:'Dubai', fyStart:1, lockDate:'', allowance:1200, pettySource:'3000',
       terms:30, invNote:'Thank you for your business.', bankDetails:'',
-      payDays:30, hoursDay:8, otMult:1.25, deductBasis:'gross', wpsAcc:'1100', cashAcc:'1000', weekOff:''
+      payDays:30, hoursDay:8, otMult:1.25, deductBasis:'gross', wpsAcc:'1100', cashAcc:'1000', weekOff:'', accrueEOS:true, depYears:5
     }, s),
     accounts: DEFAULT_ACCOUNTS.map(([code,name,type,role]) => ({code, name, type, role, active:true})),
     contacts: [], vouchers: [], statement: [], recons: [], audit: [], employees: [], attendance: {}, payruns: [], advances: []
@@ -751,7 +776,7 @@ function totals(v){
   const rows = (v.items || []).map(it => {
     const r = vatRateOf(it);
     let net, tax, gross;
-    if(v.type === 'INV'){ net = r2((+it.qty || 0) * (+it.rate || 0)); tax = r2(net * r); gross = r2(net + tax); }
+    if(v.type === 'INV' || v.type === 'CN'){ net = r2((+it.qty || 0) * (+it.rate || 0)); tax = r2(net * r); gross = r2(net + tax); }
     else if(v.incl){ gross = r2(it.amount); net = r2(gross / (1 + r)); tax = r2(gross - net); }
     else { net = r2(it.amount); tax = r2(net * r); gross = r2(net + tax); }
     return {it, net, tax, gross};
@@ -760,7 +785,7 @@ function totals(v){
   return {rows, net, tax, total: r2(net + tax)};
 }
 function docTotal(v){
-  if(['INV','BILL','SAL','EXP'].includes(v.type)) return totals(v).total;
+  if(['INV','BILL','SAL','EXP','CN','DN'].includes(v.type)) return totals(v).total;
   if(v.type === 'JV') return r2(v.items.reduce((s,i)=>s + (+i.dr || 0), 0));
   return r2(v.amount);
 }
@@ -780,6 +805,11 @@ function post(v){
     case 'BILL': { const t = totals(v);
       t.rows.forEach(r => ln(r.it.acc, r.net, 0, r.it.desc, '')); ln(roleAcc('vatin'), t.tax, 0, 'Input VAT', '');
       ln(roleAcc('ap'), 0, t.total, 'Bill ' + (v.ref || v.no), v.party); break; }
+    case 'CN': { const t = totals(v);
+      t.rows.forEach(r => ln(r.it.acc, r.net, 0, r.it.desc || 'Credit note', '')); ln(roleAcc('vatout'), t.tax, 0, 'Output VAT reversed', '');
+      ln(roleAcc('ar'), 0, t.total, 'Credit note ' + v.no + (v.ref ? ' for ' + v.ref : ''), v.party); break; }
+    case 'DN': { const t = totals(v); ln(roleAcc('ap'), t.total, 0, 'Debit note ' + v.no + (v.ref ? ' for ' + v.ref : ''), v.party);
+      t.rows.forEach(r => ln(r.it.acc, 0, r.net, r.it.desc || 'Debit note', '')); ln(roleAcc('vatin'), 0, t.tax, 'Input VAT reversed', ''); break; }
     case 'RCPT': ln(v.payAcc, v.amount, 0, 'Receipt from ' + who, ''); ln(roleAcc('ar'), 0, v.amount, 'Receipt ' + v.no, v.party); break;
     case 'PAY':  ln(roleAcc('ap'), v.amount, 0, 'Payment ' + v.no, v.party); ln(v.payAcc, 0, v.amount, 'Payment to ' + who, ''); break;
     case 'TRF':  ln(v.toAcc, v.amount, 0, v.memo || ('From ' + accName(v.payAcc)), ''); ln(v.payAcc, 0, v.amount, v.memo || ('To ' + accName(v.toAcc)), ''); break;
@@ -1091,8 +1121,8 @@ function dbToWB(){
   const al = [['Voucher ID','Document ID','Amount']]; for(const v of DB.vouchers) (v.alloc||[]).forEach(a => al.push([v.id, a.doc, +a.amt]));
   addSheet(wb, 'Allocations', al, [14,14,12]);
   addSheet(wb, 'Reconciliations', [['ID','Account','Date','Book Balance','Actual Balance','Difference','Note','By','Saved'], ...DB.recons.map(x => [x.id, x.acc, x.date, +x.book, +x.actual, +x.diff, x.note||'', x.user||'', x.t||''])], [14,8,11,14,14,12,40,14,22]);
-  addSheet(wb, 'Employees', [['ID','Code','Name','Position','Department','Phone','Joined','Left','Basic','Housing','Transport','Other','Pay Mode','Bank','IBAN','Labour ID','Notes','Commission %','Commission Target'],
-    ...DB.employees.map(e => [e.id, e.code||'', e.name, e.title||'', e.dept||'', e.phone||'', e.join||'', e.left||'', +e.basic||0, +e.housing||0, +e.transport||0, +e.other||0, e.payMode||'Bank', e.bank||'', e.iban||'', e.labourId||'', e.notes||'', +e.commPct||0, +e.target||0])], [14,10,26,16,12,14,11,11,10,10,10,10,9,16,26,14,30]);
+  addSheet(wb, 'Employees', [['ID','Code','Name','Position','Department','Phone','Joined','Left','Basic','Housing','Transport','Other','Pay Mode','Bank','IBAN','Labour ID','Notes','Commission %','Commission Target','Commission Basis','Product Commission %','Final Settlement'],
+    ...DB.employees.map(e => [e.id, e.code||'', e.name, e.title||'', e.dept||'', e.phone||'', e.join||'', e.left||'', +e.basic||0, +e.housing||0, +e.transport||0, +e.other||0, e.payMode||'Bank', e.bank||'', e.iban||'', e.labourId||'', e.notes||'', +e.commPct||0, +e.target||0, e.commBasis||'above', +e.prodPct||0, e.settle ? JSON.stringify(e.settle) : ''])], [14,10,26,16,12,14,11,11,10,10,10,10,9,16,26,14,30]);
   const att = [['Employee ID','Month','Days','OT Hours']]; for(const [id, ms] of Object.entries(DB.attendance)) for(const [ym, a] of Object.entries(ms)) if(a.days || a.ot) att.push([id, ym, a.days || '', +a.ot || 0]);
   addSheet(wb, 'Attendance', att, [14,9,34,9]);
   addSheet(wb, 'Payroll Runs', [['ID','Month','Status','Journal ID','Payment IDs','Created','By'], ...DB.payruns.map(r => [r.id, r.ym, r.status, r.jv||'', (r.pays||[]).join(','), r.created||'', r.by||''])], [14,9,10,14,30,22,14]);
@@ -1132,7 +1162,8 @@ function wbToDB(wb){
     if(r['Contact ID']) it.party = String(r['Contact ID']); if(r['Staff ID']) it.staff = String(r['Staff ID']); v.items.push(it); });
   (rows('Allocations')||[]).forEach(r => { const v = byId[r['Voucher ID']]; if(v) v.alloc.push({doc:String(r['Document ID']), amt:r2(num(r.Amount))}); });
   (rows('Employees')||[]).forEach(r => r.ID && db.employees.push({id:String(r.ID), code:String(r.Code||''), name:String(r.Name), title:String(r.Position||''), dept:String(r.Department||''), phone:String(r.Phone||''), join:toISO(r.Joined), left:toISO(r.Left),
-    basic:r2(num(r.Basic)), housing:r2(num(r.Housing)), transport:r2(num(r.Transport)), other:r2(num(r.Other)), payMode:String(r['Pay Mode']||'Bank'), bank:String(r.Bank||''), iban:String(r.IBAN||''), labourId:String(r['Labour ID']||''), notes:String(r.Notes||''), commPct:num(r['Commission %']), target:num(r['Commission Target'])}));
+    basic:r2(num(r.Basic)), housing:r2(num(r.Housing)), transport:r2(num(r.Transport)), other:r2(num(r.Other)), payMode:String(r['Pay Mode']||'Bank'), bank:String(r.Bank||''), iban:String(r.IBAN||''), labourId:String(r['Labour ID']||''), notes:String(r.Notes||''), commPct:num(r['Commission %']), target:num(r['Commission Target']), commBasis:String(r['Commission Basis']||'above'), prodPct:num(r['Product Commission %']),
+      ...(r['Final Settlement'] ? {settle: (() => { try{ return JSON.parse(r['Final Settlement']); }catch(e){ return undefined; } })()} : {})}));
   (rows('Attendance')||[]).forEach(r => { if(!r['Employee ID']) return; (db.attendance[r['Employee ID']] ||= {})[String(r.Month).slice(0,7)] = {days:String(r.Days||''), ot:num(r['OT Hours'])}; });
   const runs = {}; (rows('Payroll Runs')||[]).forEach(r => { if(!r.ID) return; const x = {id:String(r.ID), ym:String(r.Month).slice(0,7), status:String(r.Status||'Draft'), jv:String(r['Journal ID']||''), pays:String(r['Payment IDs']||'').split(',').filter(Boolean), created:String(r.Created||''), by:String(r.By||''), lines:[]}; runs[x.id] = x; db.payruns.push(x); });
   (rows('Payroll Lines')||[]).forEach(r => { const x = runs[r['Run ID']]; if(!x) return; x.lines.push({emp:String(r['Employee ID']), basic:num(r.Basic), housing:num(r.Housing), transport:num(r.Transport), other:num(r.Other), payMode:String(r['Pay Mode']||'Bank'), days:num(r.Days),
@@ -1547,6 +1578,7 @@ const ACT = {
   newMenu: () => openDlg(`<div class="dlg"><h2>New entry</h2><p>Pick what happened.</p><div class="newmenu">
     ${[['SAL','Sales cash','Money taken at the counter today'],['EXP','Expense','Anything paid for, from cash, petty cash or bank'],['INV','Sales invoice','Bill a customer to pay later'],
        ['BILL','Supplier bill','A supplier invoice you will pay later'],['RCPT','Customer receipt','Money received against invoices'],['PAY','Supplier payment','Money paid against bills'],
+       ['CN','Credit note','Customer return, discount or cancelled service'],['DN','Supplier debit note','Goods returned to a supplier, overcharge'],
        ['TRF','Transfer','Bank deposit, petty top-up, cash withdrawal'],['JV','Journal entry','Opening balances, corrections, depreciation']]
        .map(([t,b,s]) => `<button data-act="newV" data-t="${t}"><b>${b}</b><span>${s}</span></button>`).join('')}</div>
     <div class="dlg-foot"><button class="btn ghost" data-act="close">Cancel</button></div></div>`, 'mid'),
@@ -1586,7 +1618,7 @@ async function reloadFromFile(){
    forms.js — one form engine for every entry type
    ===================================================================== */
 let F = null;            // the entry being edited
-const blankItem = type => type === 'INV' ? {acc:'4000', desc:'', qty:1, rate:'', vat: DB.settings.vatOn ? 'SR' : 'NA'}
+const blankItem = type => (type === 'INV' || type === 'CN') ? {acc:'4000', desc:'', qty:1, rate:'', vat: DB.settings.vatOn ? 'SR' : 'NA'}
   : type === 'JV' ? {acc:'', desc:'', dr:'', cr:'', party:''}
   : {acc: type === 'SAL' ? '4000' : '', desc:'', amount:'', vat: DB.settings.vatOn ? 'SR' : 'NA'};
 
@@ -1602,6 +1634,9 @@ function newVoucher(type, opts={}){
     case 'PAY': v.payAcc = roleAcc('bank') || '1100'; break;
     case 'TRF': v.payAcc = opts.from || '1000'; v.toAcc = opts.to || roleAcc('bank') || '1100'; if(opts.amount) v.amount = opts.amount; if(opts.memo) v.memo = opts.memo; break;
     case 'JV': v.items = [blankItem('JV'), blankItem('JV')]; v.incl = false; break;
+    case 'CN': case 'DN': { v.incl = false; const src = vById(opts.inv || opts.bill);
+      if(src){ v.party = src.party; v.against = src.id; v.ref = src.no; v.items = JSON.parse(JSON.stringify(src.items)); }
+      else v.items = [blankItem(type)]; break; }
   }
   if(opts.party) v.party = opts.party;
   if(opts.amount && type !== 'TRF') v.amount = opts.amount;
@@ -1648,6 +1683,13 @@ function voucherForm(v){
     case 'BILL':
       head = `<div class="grid4">${contactPick('supplier')}${fld('Bill date', inp('date', v.date, 'type="date" required'))}${fld('Due date', inp('due', v.due, 'type="date"'))}${fld('Supplier invoice no', inp('ref', v.ref))}</div>${quick}`;
       body = itemsTable(v, isCost, 'Account') + `<div style="margin-top:10px">${fld('Memo', inp('memo', v.memo))}</div>`; break;
+    case 'CN': case 'DN': {
+      const isCN = v.type === 'CN', docs = v.party ? DB.vouchers.filter(d => d.type === (isCN ? 'INV' : 'BILL') && d.party === v.party).sort((a,b)=>a.date<b.date?1:-1) : [];
+      const ag = v.against ?? v.alloc?.[0]?.doc ?? '';
+      head = `<div class="grid4">${contactPick(isCN ? 'customer' : 'supplier')}${fld('Date', inp('date', v.date, 'type="date" required'))}
+        ${fld(isCN ? 'Against invoice' : 'Against bill', `<select name="against"><option value="">None, leave as credit</option>${docs.map(d => opt(d.id, `${d.no}${d.ref && !isCN ? ' (' + d.ref + ')' : ''} · ${dShort(d.date)} · ${fmt(docTotal(d))}`, ag)).join('')}</select>`)}
+        ${fld('Reason', inp('memo', v.memo, `placeholder="${isCN ? 'e.g. Service not completed, refund' : 'e.g. Damaged items returned'}"`))}</div>${quick}`;
+      body = itemsTable(v, isCN ? isIncome : isCost, isCN ? 'Income account' : 'Account'); break; }
     case 'RCPT': case 'PAY': {
       const kind = v.type === 'RCPT' ? 'customer' : 'supplier';
       head = `<div class="grid3">${contactPick(kind)}${fld('Date', inp('date', v.date, 'type="date" required'))}${fld(v.type === 'RCPT' ? 'Received into' : 'Paid from', `<select name="payAcc">${accOptions(pay, v.payAcc)}</select>`)}</div>${quick}
@@ -1666,7 +1708,7 @@ function voucherForm(v){
   const canPay = editing && ['INV','BILL'].includes(v.type) && outstanding(vById(v.id)) > 0.005;
   return `<form class="dlg" id="vform" data-form="voucher" autocomplete="off">
     <h2>${editing ? `${T.name} ${esc(v.no)}` : 'New ' + T.name.toLowerCase()}</h2>
-    <p>${locked ? `<b>Locked period.</b> Entries up to ${dLong(DB.settings.lockDate)} cannot be changed.` : ({SAL:'Money taken at the counter. Amounts include VAT when VAT applies.', EXP:'A cost paid straight away from cash, petty cash or the bank.', INV:'Bill a customer. VAT is added on top of the prices.', BILL:'A supplier invoice to pay later.', RCPT:'Money in from a customer, applied to their invoices.', PAY:'Money out to a supplier, applied to their bills.', TRF:'Money moved between your own accounts.', JV:'Debits must equal credits.', NOTE:'A remark in the cash book; no money moves.'})[v.type]}</p>
+    <p>${locked ? `<b>Locked period.</b> Entries up to ${dLong(DB.settings.lockDate)} cannot be changed.` : ({SAL:'Money taken at the counter. Amounts include VAT when VAT applies.', EXP:'A cost paid straight away from cash, petty cash or the bank.', INV:'Bill a customer. VAT is added on top of the prices.', BILL:'A supplier invoice to pay later.', RCPT:'Money in from a customer, applied to their invoices.', PAY:'Money out to a supplier, applied to their bills.', TRF:'Money moved between your own accounts.', JV:'Debits must equal credits.', NOTE:'A remark in the cash book; no money moves.', CN:'Reduces what a customer owes: a return, discount or cancelled service. Prints as a tax credit note.', DN:'Reduces what you owe a supplier: goods returned or an overcharge.'})[v.type]}</p>
     <div class="stack" style="gap:6px">${head}</div>
     ${body}
     ${['SAL','EXP','BILL'].includes(v.type) && vatOn ? `<label class="mini" style="display:flex;gap:8px;align-items:center;margin-top:6px"><input type="checkbox" class="chk" name="incl" ${v.incl?'checked':''} data-change="redraw"> Amounts include VAT</label>` : ''}
@@ -1675,14 +1717,16 @@ function voucherForm(v){
     <datalist id="dlPayee">${payeeList()}</datalist>
     <div class="dlg-foot" style="margin-top:18px">
       ${editing && !locked ? `<button type="button" class="btn danger" data-act="delV">Delete</button>` : ''}
-      ${editing && v.type === 'INV' ? `<button type="button" class="btn ghost" data-act="printInv" data-id="${v.id}">${ic('print',15)}Print invoice</button>` : ''}
+      ${editing ? `<button type="button" class="btn ghost" data-act="printV" data-id="${v.id}">${ic('print',15)}Print</button>` : ''}
+      ${editing && !locked && v.type === 'INV' ? `<button type="button" class="btn ghost" data-act="newV" data-t="CN" data-inv="${v.id}">Credit note</button>` : ''}
+      ${editing && !locked && v.type === 'BILL' ? `<button type="button" class="btn ghost" data-act="newV" data-t="DN" data-bill="${v.id}">Debit note</button>` : ''}
       ${canPay ? `<button type="button" class="btn ghost" data-act="payDoc" data-id="${v.id}">Record ${v.type === 'INV' ? 'receipt' : 'payment'}</button>` : ''}
       <button type="button" class="btn ghost" data-act="close">Cancel</button>
       ${locked ? '' : `<button class="btn" type="submit">${editing ? 'Save changes' : 'Save ' + T.verb.toLowerCase()}</button>`}
     </div></form>`;
 }
 function itemsTable(v, filter, accLabel){
-  const isInv = v.type === 'INV', vatOn = showVat(), withStaff = (v.type === 'SAL' || isInv) && DB.employees.length;
+  const isInv = v.type === 'INV' || v.type === 'CN', vatOn = showVat(), withStaff = (v.type === 'SAL' || isInv) && DB.employees.length;
   return `<table class="items"><thead><tr><th style="width:${isInv?'22%':'26%'}">${accLabel}</th><th>Description</th>${withStaff ? '<th style="width:17%">Staff (commission)</th>' : ''}${isInv ? '<th style="width:9%" class="r">Qty</th><th style="width:13%" class="r">Rate</th>' : ''}
     ${vatOn ? '<th style="width:16%">VAT</th>' : ''}<th style="width:14%" class="r">${isInv ? 'Net' : 'Amount'}</th><th style="width:34px"></th></tr></thead><tbody>
     ${v.items.map((it,n) => `<tr><td><select name="i${n}-acc">${accOptions(filter, it.acc, 'Choose…')}</select></td><td>${inp(`i${n}-desc`, it.desc, v.type === 'EXP' ? 'list="dlDesc"' : '')}</td>
@@ -1721,7 +1765,7 @@ function allocTable(v){
 function readForm(){
   const f = $('#vform'); if(!f || !F) return;
   const g = n => { const el = f.elements[n]; return el ? el.value : undefined; };
-  for(const k of ['date','due','party','pname','ref','memo','payAcc','toAcc','amount']){ const x = g(k); if(x !== undefined) F[k] = x; }
+  for(const k of ['date','due','party','pname','ref','memo','payAcc','toAcc','amount','against']){ const x = g(k); if(x !== undefined) F[k] = x; }
   if(f.elements.incl) F.incl = f.elements.incl.checked;
   F.items.forEach((it, n) => { for(const k of ['acc','desc','qty','rate','amount','vat','dr','cr','party','staff']){ const x = g(`i${n}-${k}`); if(x !== undefined) it[k] = x; } });
   if(F.type === 'RCPT' || F.type === 'PAY'){
@@ -1732,9 +1776,9 @@ function liveTotals(){
   if(!F || !$('#vform')) return; readForm();
   const box = $('#totBox'), pv = $('#postPrev'); if(!box) return;
   const cur = DB.settings.cur;
-  if(['SAL','EXP','INV','BILL'].includes(F.type)){
+  if(['SAL','EXP','INV','BILL','CN','DN'].includes(F.type)){
     const t = totals(F);
-    if(F.type === 'INV') t.rows.forEach((r,n) => { const el = $(`#i${n}-net`); if(el) el.value = fmt(r.net); });
+    if(F.type === 'INV' || F.type === 'CN') t.rows.forEach((r,n) => { const el = $(`#i${n}-net`); if(el) el.value = fmt(r.net); });
     box.innerHTML = `<div class="tot-box"><div><span>Net</span><span class="num">${fmt(t.net)}</span></div>${t.tax || showVat() ? `<div><span>VAT</span><span class="num">${fmt(t.tax)}</span></div>` : ''}<div class="g"><span>Total ${cur}</span><span class="num">${fmt(t.total)}</span></div></div>`;
   } else if(F.type === 'JV'){
     const dr = r2(F.items.reduce((s,i)=>s+num(i.dr),0)), cr = r2(F.items.reduce((s,i)=>s+num(i.cr),0));
@@ -1751,8 +1795,8 @@ function liveTotals(){
 }
 function cleanVoucher(v){
   v.amount = r2(num(v.amount));
-  if(['SAL','EXP','BILL'].includes(v.type)) v.items = v.items.map(i => ({acc:i.acc, desc:(i.desc||'').trim(), amount:r2(num(i.amount)), vat: i.vat || 'NA', ...(i.vat === 'SR' ? {vr: i.vr ?? DB.settings.vatRate} : {}), ...(i.staff && v.type === 'SAL' ? {staff:i.staff} : {})})).filter(i => i.acc && i.amount);
-  if(v.type === 'INV') v.items = v.items.map(i => ({acc:i.acc, desc:(i.desc||'').trim(), qty: i.qty === '' || i.qty == null ? 1 : num(i.qty), rate:r2(num(i.rate)), vat: i.vat || 'NA', ...(i.vat === 'SR' ? {vr: i.vr ?? DB.settings.vatRate} : {}), ...(i.staff ? {staff:i.staff} : {})})).filter(i => i.acc && (i.qty * i.rate));
+  if(['SAL','EXP','BILL','DN'].includes(v.type)) v.items = v.items.map(i => ({acc:i.acc, desc:(i.desc||'').trim(), amount:r2(num(i.amount)), vat: i.vat || 'NA', ...(i.vat === 'SR' ? {vr: i.vr ?? DB.settings.vatRate} : {}), ...(i.staff && v.type === 'SAL' ? {staff:i.staff} : {})})).filter(i => i.acc && i.amount);
+  if(v.type === 'INV' || v.type === 'CN') v.items = v.items.map(i => ({acc:i.acc, desc:(i.desc||'').trim(), qty: i.qty === '' || i.qty == null ? 1 : num(i.qty), rate:r2(num(i.rate)), vat: i.vat || 'NA', ...(i.vat === 'SR' ? {vr: i.vr ?? DB.settings.vatRate} : {}), ...(i.staff ? {staff:i.staff} : {})})).filter(i => i.acc && (i.qty * i.rate));
   if(v.type === 'JV') v.items = v.items.map(i => ({acc:i.acc, desc:(i.desc||'').trim(), dr:r2(num(i.dr)), cr:r2(num(i.cr)), ...(i.party && ['ar','ap'].includes(acc(i.acc)?.role) ? {party:i.party} : {})})).filter(i => i.acc && (i.dr || i.cr));
   if(!['SAL','EXP','BILL'].includes(v.type)) v.incl = false;
   if(!DB.settings.vatOn && !(v.items||[]).some(i => i.vat && i.vat !== 'NA') && ['SAL','EXP'].includes(v.type)) v.incl = true;
@@ -1784,7 +1828,14 @@ function saveVoucher(){
     case 'JV': { const dr = r2(v.items.reduce((s,i)=>s+i.dr,0)), cr = r2(v.items.reduce((s,i)=>s+i.cr,0));
       if(v.items.length < 2) return err('A journal needs at least two lines.'); if(Math.abs(dr - cr) > 0.005) return err(`Debits ${fmt(dr)} and credits ${fmt(cr)} must be equal.`); if(!dr) return err('Enter the amounts.'); break; }
     case 'NOTE': if(!v.memo) return err('Write the note.'); break;
+    case 'CN': case 'DN': {
+      const isCN = v.type === 'CN'; if(!v.party) return err(`Choose the ${isCN ? 'customer' : 'supplier'}.`); if(!v.items.length) return err('Add at least one line with an amount.');
+      v.alloc = []; const d = v.against ? vById(v.against) : null;
+      if(d){ const mine = r2((orig?.alloc || []).filter(a => a.doc === d.id).reduce((s,a)=>s+a.amt,0)), open = r2(outstanding(d) + mine), amt = r2(Math.min(docTotal(v), open));
+        if(amt > 0.005) v.alloc = [{doc:d.id, amt}]; v.ref = d.no; }
+      break; }
   }
+  delete v.against;
   const now = new Date().toISOString();
   if(orig){ v.no = orig.no; v.created = orig.created; v.updated = now; const i = DB.vouchers.findIndex(x => x.id === orig.id); DB.vouchers[i] = v; audit('Changed', v); }
   else { v.id = uid('v'); v.no = nextNo(v.type); v.created = v.updated = now; DB.vouchers.push(v); audit('Added', v); }
@@ -1821,10 +1872,11 @@ Object.assign(ACT, {
     const c = {id:uid('c'), kind:d.k, name, phone:f.elements['q-phone'].value.trim(), email:'', trn:f.elements['q-trn'].value.trim(), address:'', terms: d.k === 'customer' ? +DB.settings.terms || 30 : 30};
     readForm(); DB.contacts.push(c); F.party = c.id; delete F._quick; invalidate(); saveLocal(); drawForm(); toast(name + ' added'); },
   printInv: d => { const v = vById(d.id); if(v) printHTML(invoiceHTML(v)); },
+  printV: d => { const v = vById(d.id); if(v) printHTML(['INV','CN'].includes(v.type) ? invoiceHTML(v) : voucherHTML(v)); },
   payDoc: d => { const v = vById(d.id); if(!v) return; openVoucher(newVoucher(v.type === 'INV' ? 'RCPT' : 'PAY', {doc:v.id})); }
 });
 Object.assign(CHANGE, {
-  party: () => { readForm(); if(F.type === 'RCPT' || F.type === 'PAY') F.alloc = []; if(F.type === 'INV' && F.party){ const c = contact(F.party); if(c?.terms) F.due = addDays(F.date, +c.terms); } drawForm(); },
+  party: () => { readForm(); if(F.type === 'RCPT' || F.type === 'PAY') F.alloc = []; if(F.type === 'CN' || F.type === 'DN'){ F.against = ''; F.alloc = []; } if(F.type === 'INV' && F.party){ const c = contact(F.party); if(c?.terms) F.due = addDays(F.date, +c.terms); } drawForm(); },
   invdate: () => { readForm(); const c = contact(F.party); F.due = addDays(F.date, +(c?.terms || DB.settings.terms || 30)); drawForm(); },
   redraw: () => { readForm(); drawForm(); },
   payee: t => { const c = supplierByName(t.value); if(!c || F?.type !== 'EXP') return; readForm(); if(c.cat && F.items[0] && !F.items[0].acc){ F.items[0].acc = c.cat; drawForm(); } }
@@ -1834,15 +1886,17 @@ document.addEventListener('submit', e => { if(e.target.dataset.form === 'voucher
 /* ---------- printable invoice ---------- */
 function invoiceHTML(v){
   const s = DB.settings, c = contact(v.party) || {}, t = totals(v), paid = r2(t.total - outstanding(v));
-  const title = s.vatOn && s.trn ? 'TAX INVOICE' : 'INVOICE';
+  const isCN = v.type === 'CN', orig = isCN ? vById(v.alloc?.[0]?.doc) : null;
+  const title = isCN ? (s.vatOn && s.trn ? 'TAX CREDIT NOTE' : 'CREDIT NOTE') : s.vatOn && s.trn ? 'TAX INVOICE' : 'INVOICE';
   return `<div class="inv"><div class="ih"><div><img src="${LOGO_DARK}" alt="" style="height:84px;margin-bottom:6px"><h1>${esc(s.legal || s.biz)}</h1><div>${esc(s.address).replace(/\n/g,'<br>')}</div><div>${esc([s.phone, s.email].filter(Boolean).join(' · '))}</div>${s.trn ? `<div><b>TRN</b> ${esc(s.trn)}</div>` : ''}</div>
-    <div class="t"><h2>${title}</h2><div><b>${esc(v.no)}</b></div><div>Date: ${dLong(v.date)}</div>${v.due ? `<div>Due: ${dLong(v.due)}</div>` : ''}${v.ref ? `<div>Your ref: ${esc(v.ref)}</div>` : ''}</div></div>
+    <div class="t"><h2>${title}</h2><div><b>${esc(v.no)}</b></div><div>Date: ${dLong(v.date)}</div>${!isCN && v.due ? `<div>Due: ${dLong(v.due)}</div>` : ''}${isCN && (v.ref || orig) ? `<div>Against invoice: <b>${esc(orig?.no || v.ref)}</b>${orig ? ' of ' + dLong(orig.date) : ''}</div>` : v.ref ? `<div>Your ref: ${esc(v.ref)}</div>` : ''}</div></div>
     <div><b>Bill to</b><br>${esc(c.name||'')}<br>${esc(c.address||'').replace(/\n/g,'<br>')}${c.trn ? `<br>TRN ${esc(c.trn)}` : ''}</div>
     <table><thead><tr><th>Description</th><th class="r">Qty</th><th class="r">Rate</th>${t.tax ? '<th class="r">VAT %</th><th class="r">VAT</th>' : ''}<th class="r">Amount ${esc(s.cur)}</th></tr></thead><tbody>
     ${t.rows.map(r => `<tr><td>${esc(r.it.desc || accName(r.it.acc))}</td><td class="r">${r.it.qty}</td><td class="r">${fmt(r.it.rate)}</td>${t.tax ? `<td class="r">${r.it.vat === 'SR' ? (r.it.vr ?? s.vatRate) : 0}</td><td class="r">${fmt(r.tax)}</td>` : ''}<td class="r">${fmt(r.net + (t.tax ? r.tax : 0))}</td></tr>`).join('')}</tbody></table>
     <div class="tt"><div><span>Total excluding VAT</span><span>${fmt(t.net)}</span></div>${t.tax ? `<div><span>VAT</span><span>${fmt(t.tax)}</span></div>` : ''}<div class="g"><span>Total ${esc(s.cur)}</span><span>${fmt(t.total)}</span></div>
-    ${paid > 0.005 ? `<div><span>Paid</span><span>${fmt(paid)}</span></div><div><b>Balance due</b><b>${fmt(outstanding(v))}</b></div>` : ''}</div>
-    <div class="foot">${esc(v.memo || s.invNote)}${s.bankDetails ? `<br><br><b>Bank details</b><br>${esc(s.bankDetails).replace(/\n/g,'<br>')}` : ''}</div></div>`;
+    ${!isCN && paid > 0.005 ? `<div><span>Paid and credited</span><span>${fmt(paid)}</span></div><div><b>Balance due</b><b>${fmt(outstanding(v))}</b></div>` : ''}</div>
+    <p class="words">${esc(amountWords(t.total))}</p>
+    <div class="foot">${isCN ? (v.memo ? '<b>Reason:</b> ' + esc(v.memo) : '') : esc(v.memo || s.invNote)}${s.bankDetails ? `<br><br><b>Bank details</b><br>${esc(s.bankDetails).replace(/\n/g,'<br>')}` : ''}</div></div>`;
 }
 
 /* =====================================================================
@@ -2023,21 +2077,23 @@ PAGES.expenses = () => {
 /* ---------- invoices and bills ---------- */
 function docPage(type){
   const isInv = type === 'INV', q = state.q.toLowerCase();
-  const all = sortedVouchers().filter(v => v.type === type).reverse(), [pf, pt] = monthRange();
-  const list = all.filter(v => v.date >= pf && v.date <= pt).filter(v => state.docf === 'All' || (state.docf === 'Open' ? outstanding(v) > 0.005 : docStatus(v) === state.docf))
+  const note = isInv ? 'CN' : 'DN', all = sortedVouchers().filter(v => v.type === type).reverse(), [pf, pt] = monthRange();
+  const list = sortedVouchers().filter(v => v.type === type || v.type === note).reverse().filter(v => v.date >= pf && v.date <= pt)
+    .filter(v => v.type === note ? ['All', 'Notes'].includes(state.docf) : state.docf === 'All' || (state.docf === 'Open' ? outstanding(v) > 0.005 : docStatus(v) === state.docf))
     .filter(v => !q || [v.no, v.ref, contactName(v), ...v.items.map(i=>i.desc)].join(' ').toLowerCase().includes(q));
   const openAmt = all.reduce((s,v)=>s+Math.max(0,outstanding(v)),0), od = all.filter(v => docStatus(v) === 'Overdue');
   return header(isInv ? 'Sales invoices' : 'Supplier bills', isInv ? 'What customers owe and what they have paid' : 'What you owe suppliers and what you have paid',
-    {month:true, newAct:'newV', newType:type, newLabel: isInv ? 'Invoice' : 'Bill', extra:`<button class="btn ghost" data-act="newV" data-t="${isInv ? 'RCPT' : 'PAY'}">${isInv ? 'Record receipt' : 'Record payment'}</button>`}) + `
+    {month:true, newAct:'newV', newType:type, newLabel: isInv ? 'Invoice' : 'Bill', extra:`<button class="btn ghost" data-act="newV" data-t="${isInv ? 'RCPT' : 'PAY'}">${isInv ? 'Record receipt' : 'Record payment'}</button><button class="btn ghost" data-act="newV" data-t="${note}">${isInv ? 'Credit note' : 'Debit note'}</button>`}) + `
   <div class="stats"><div class="stat"><p>Open</p><b class="num">${fmt(openAmt)}</b><small>${all.filter(v => outstanding(v) > 0.005).length} ${isInv ? 'invoices' : 'bills'}</small></div>
     <div class="stat"><p>Overdue</p><b class="num out">${fmt(od.reduce((s,v)=>s+outstanding(v),0))}</b><small>${od.length} past due date</small></div>
     <div class="stat"><p>${isInv ? 'Invoiced' : 'Billed'} in ${state.key.slice(0,4)}</p><b class="num">${fmt(all.filter(v => v.date.startsWith(state.key.slice(0,4))).reduce((s,v)=>s+docTotal(v),0))}</b><small>Including VAT</small></div>
     <div class="stat"><p>${isInv ? 'Received' : 'Paid'} in ${state.key.slice(0,4)}</p><b class="num in">${fmt(DB.vouchers.filter(v => v.type === (isInv ? 'RCPT' : 'PAY') && v.date.startsWith(state.key.slice(0,4))).reduce((s,v)=>s+v.amount,0))}</b><small>${isInv ? 'Receipts' : 'Payments'}</small></div></div>
   <section class="panel"><div class="panel-head"><div><h2>${isInv ? 'Invoices' : 'Bills'}, ${periodLabel()}</h2><p>${list.length} shown. Click one to open it.</p></div>
     <div class="row-btns"><input class="search" type="search" placeholder="Search" value="${esc(state.q)}" data-input="q" aria-label="Search"><button class="btn ghost sm no-print" data-act="print">${ic('print',15)}Print</button></div></div>
-    <div class="chips" style="margin-bottom:14px">${['All','Open','Overdue','Part paid','Paid'].map(f => `<button data-act="docf" data-f="${f}" aria-pressed="${state.docf===f}">${f}</button>`).join('')}</div>
+    <div class="chips" style="margin-bottom:14px">${['All','Open','Overdue','Part paid','Paid','Notes'].map(f => `<button data-act="docf" data-f="${f}" aria-pressed="${state.docf===f}">${f}</button>`).join('')}</div>
     ${list.length ? `<div class="tbl-wrap"><table><thead><tr><th>${isInv ? 'Invoice' : 'Bill'}</th><th>Date</th><th>${isInv ? 'Customer' : 'Supplier'}</th><th>Due</th><th class="r">Total</th><th class="r">Open</th><th>Status</th></tr></thead><tbody>
-      ${list.map(v => `<tr data-act="editV" data-id="${v.id}"><td>${esc(v.no)}${v.ref && !isInv ? ` <span class="mini">${esc(v.ref)}</span>` : ''}</td><td>${dShort(v.date)}</td><td>${esc(contactName(v))}</td><td>${dShort(v.due)}</td><td class="r num">${fmt(docTotal(v))}</td><td class="r num">${fmtZ(outstanding(v))}</td><td>${pill(docStatus(v))}</td></tr>`).join('')}</tbody></table></div>`
+      ${list.map(v => v.type === note ? `<tr data-act="editV" data-id="${v.id}"><td>${esc(v.no)} <span class="mini">${esc(v.ref ? 'for ' + v.ref : '')}</span></td><td>${dShort(v.date)}</td><td>${esc(contactName(v))}</td><td></td><td class="r num out">${fmt(-docTotal(v))}</td><td class="r num">–</td><td>${pill(TYPES[note].name)}</td></tr>`
+        : `<tr data-act="editV" data-id="${v.id}"><td>${esc(v.no)}${v.ref && !isInv ? ` <span class="mini">${esc(v.ref)}</span>` : ''}</td><td>${dShort(v.date)}</td><td>${esc(contactName(v))}</td><td>${dShort(v.due)}</td><td class="r num">${fmt(docTotal(v))}</td><td class="r num">${fmtZ(outstanding(v))}</td><td>${pill(docStatus(v))}</td></tr>`).join('')}</tbody></table></div>`
     : empty(`No ${isInv ? 'invoices' : 'bills'} yet`, isInv ? 'Create one for home-service clients, corporate customers or anyone who pays later.' : 'Enter supplier invoices you will pay later, then record the payment against them.')}</section>`;
 }
 PAGES.invoices = () => docPage('INV');
@@ -2083,7 +2139,7 @@ function contactDlg(c){
       ${!isNew && !isSup ? `<button type="button" class="btn ghost" data-act="newV" data-t="INV" data-party="${c.id}">New invoice</button>` : ''}
       <button type="button" class="btn ghost" data-act="close">Cancel</button><button class="btn" type="submit">${isNew ? 'Add ' + c.kind : 'Save'}</button></div></form>`;
 }
-function statementHTML(c){
+function statementHTML_v1(c){
   const s = DB.settings, st = contactStatement(c);
   return `<div class="inv"><div class="ih"><div><img src="${LOGO_DARK}" alt="" style="height:84px;margin-bottom:6px"><h1>${esc(s.legal || s.biz)}</h1>${s.trn ? `<div>TRN ${esc(s.trn)}</div>` : ''}</div><div class="t"><h2>STATEMENT</h2><div>${dLong(todayISO())}</div></div></div>
     <div><b>${esc(c.name)}</b><br>${esc(c.address||'').replace(/\n/g,'<br>')}</div>
@@ -2144,7 +2200,7 @@ PAGES.journal = () => {
   const [from, to] = monthRange(), q = state.q.toLowerCase();
   const list = sortedVouchers().filter(v => (q ? true : v.date >= from && v.date <= to) && (state.ftype === 'All' || v.type === state.ftype))
     .filter(v => !q || [v.no, v.memo, v.pname, v.ref, contactName(v), ...v.items.map(i => i.desc)].join(' ').toLowerCase().includes(q)).reverse();
-  return header('Journal', q ? 'Search across every entry' : 'Every entry in the period, newest first', {month:!q, newAct:'newV', newType:'JV', newLabel:'Journal entry'}) + `
+  return header('Journal', q ? 'Search across every entry' : 'Every entry in the period, newest first', {month:!q, newAct:'newV', newType:'JV', newLabel:'Journal entry', extra:'<button class="btn ghost" data-act="depreciation">Depreciation</button>'}) + `
   <section class="panel"><div class="panel-head"><div><h2>${q ? 'Search results' : periodLabel()}</h2><p>${list.length} entries</p></div><div class="row-btns"><input class="search" type="search" placeholder="Search all entries" value="${esc(state.q)}" data-input="q" aria-label="Search entries"><button class="btn ghost sm no-print" data-act="print">${ic('print',15)}Print</button></div></div>
     <div class="chips" style="margin-bottom:14px">${['All', ...Object.keys(TYPES)].map(t => `<button data-act="ftype" data-f="${t}" aria-pressed="${state.ftype===t}">${t === 'All' ? 'All' : esc(TYPES[t].name)}</button>`).join('')}</div>
     ${list.length ? `<div class="tbl-wrap"><table><thead><tr><th>Date</th><th>Entry</th><th>Type</th><th>Details</th><th class="r">Amount</th></tr></thead><tbody>
@@ -2502,10 +2558,11 @@ const VAT_BOXES = [
 function vatData(from, to){
   const d = {b1net:0,b1vat:0,b4:0,b5:0,b9net:0,b9vat:0};
   for(const v of DB.vouchers){ if(v.date < from || v.date > to) continue;
-    const sales = v.type === 'SAL' || v.type === 'INV', buys = v.type === 'EXP' || v.type === 'BILL'; if(!sales && !buys) continue;
-    for(const r of totals(v).rows){ const c = r.it.vat || 'NA';
-      if(sales){ if(c === 'SR'){ d.b1net += r.net; d.b1vat += r.tax; } else if(c === 'ZR') d.b4 += r.net; else if(c === 'EX') d.b5 += r.net; }
-      else if(c === 'SR'){ d.b9net += r.net; d.b9vat += r.tax; } } }
+    const sales = ['SAL','INV','CN'].includes(v.type), buys = ['EXP','BILL','DN'].includes(v.type); if(!sales && !buys) continue;
+    const sg = v.type === 'CN' || v.type === 'DN' ? -1 : 1; // credit and debit notes are adjustments in the same boxes
+    for(const r of totals(v).rows){ const c = r.it.vat || 'NA', net = sg * r.net, tax = sg * r.tax;
+      if(sales){ if(c === 'SR'){ d.b1net += net; d.b1vat += tax; } else if(c === 'ZR') d.b4 += net; else if(c === 'EX') d.b5 += net; }
+      else if(c === 'SR'){ d.b9net += net; d.b9vat += tax; } } }
   for(const k in d) d[k] = r2(d[k]);
   d.b8net = r2(d.b1net + d.b4 + d.b5); d.b8vat = d.b1vat; d.b12 = d.b1vat; d.b13 = d.b9vat; d.b14 = r2(d.b12 - d.b13);
   return d;
@@ -2698,16 +2755,33 @@ function hrNormalize(){
   DB.employees ||= []; DB.attendance ||= {}; DB.payruns ||= []; DB.advances ||= [];
   for(const [k,v] of Object.entries(HR_DEFAULTS)) if(DB.settings[k] === undefined) DB.settings[k] = v;
   if(!acc('6120')){ DB.accounts.push({code:'6120', name:'Staff commission', type:'expense', role:'', active:true}); DB.accounts.sort((a,b)=>a.code.localeCompare(b.code)); }
-  if(!acc('1450')){ DB.accounts.push({code:'1450', name:'Staff advances', type:'asset', role:'', active:true}); DB.accounts.sort((a,b)=>a.code.localeCompare(b.code)); }
+  for(const [code, name, type] of [['1450','Staff advances','asset'], ['1590','Accumulated depreciation','asset'], ['2400','End of service provision','liability'], ['6130','End of service and leave pay','expense'], ['6960','Depreciation','expense']])
+    if(!acc(code)) DB.accounts.push({code, name, type, role:'', active:true});
+  DB.accounts.sort((a,b)=>a.code.localeCompare(b.code));
+  if(DB.settings.accrueEOS === undefined) DB.settings.accrueEOS = true; if(DB.settings.depYears === undefined) DB.settings.depYears = 5;
 }
 const emp = id => DB.employees.find(e => e.id === id);
 const daysIn = ym => +lastDay(ym).slice(8);
 const dow = (ym, d) => new Date(Date.UTC(+ym.slice(0,4), +ym.slice(5,7)-1, d)).getUTCDay(); // 0 Sun .. 6 Sat
 const grossOf = e => r2((+e.basic||0) + (+e.housing||0) + (+e.transport||0) + (+e.other||0));
 /* staff sales: net (before VAT) of sales and invoice lines tagged with the employee */
-function staffSales(empId, from, to){ let s = 0; for(const v of DB.vouchers){ if((v.type !== 'SAL' && v.type !== 'INV') || v.date < from || v.date > to) continue;
-  for(const r of totals(v).rows) if(r.it.staff === empId) s += r.net; } return r2(s); }
-const commissionOf = (e, sales) => r2(Math.max(0, sales - (+e.target||0)) * (+e.commPct||0) / 100);
+const isProductAcc = code => code === '4100' || /product|retail/i.test(accName(code));
+const COMM_BASIS = {above:'On service sales above the target', all:'On all service sales once the target is reached', flat:'On all service sales (no target)'};
+/** every sales, invoice and credit-note line tagged with the employee, before VAT (credit notes count negative) */
+function staffLines(empId, from, to){ const out = [];
+  for(const v of sortedVouchers()){ if(!['SAL','INV','CN'].includes(v.type) || v.date < from || v.date > to) continue; const sg = v.type === 'CN' ? -1 : 1;
+    for(const r of totals(v).rows) if(r.it.staff === empId) out.push({v, date:v.date, no:v.no, who: contactName(v) || 'Walk-in', desc:r.it.desc || accName(r.it.acc), acc:r.it.acc, product:isProductAcc(r.it.acc), net:r2(sg * r.net)}); }
+  return out; }
+function staffSales(empId, from, to){ return r2(staffLines(empId, from, to).reduce((s,l)=>s+l.net,0)); }
+/** commission for one employee and period: services by basis and target, products at their own rate */
+function commissionCalc(e, from, to){
+  const lines = staffLines(e.id, from, to), svc = r2(lines.filter(l => !l.product).reduce((s,l)=>s+l.net,0)), prod = r2(lines.filter(l => l.product).reduce((s,l)=>s+l.net,0));
+  const pct = +e.commPct || 0, target = +e.target || 0, basis = e.commBasis || 'above', ppct = +e.prodPct || 0;
+  const base = basis === 'flat' ? svc : basis === 'all' ? (svc >= target ? svc : 0) : Math.max(0, svc - target);
+  const commSvc = r2(Math.max(0, base) * pct / 100), commProd = r2(Math.max(0, prod) * ppct / 100);
+  return {lines, svc, prod, sales:r2(svc + prod), pct, target, basis, ppct, base:r2(Math.max(0, base)), commSvc, commProd, total:r2(commSvc + commProd)};
+}
+const commissionOf = (e, sales, ym) => ym ? commissionCalc(e, ym + '-01', lastDay(ym)).total : r2(Math.max(0, sales - (+e.target||0)) * (+e.commPct||0) / 100);
 const staffOptions = sel => `<option value="">–</option>` + DB.employees.filter(e => !e.left || e.left >= todayISO() || e.id === sel).sort((a,b)=>a.name.localeCompare(b.name)).map(e => opt(e.id, e.name, sel)).join('');
 const activeIn = (e, ym) => (!e.join || e.join <= lastDay(ym)) && (!e.left || e.left >= ym + '-01');
 
@@ -2735,7 +2809,8 @@ function attSummary(e, ym){
 function advanceBalance(empId, excludeRun, asOf){
   const given = DB.advances.filter(a => a.emp === empId && (!asOf || a.date <= asOf)).reduce((t,a)=>t+(+a.amount||0),0);
   const back = DB.payruns.filter(r => r.status !== 'Draft' && r.id !== excludeRun).flatMap(r => r.lines).filter(l => l.emp === empId).reduce((t,l)=>t+(+l.advanceRec||0),0);
-  return r2(given - back);
+  const settled = +(emp(empId)?.settle?.adv || 0);
+  return r2(given - back - settled);
 }
 function calcLine(l){
   const s = DB.settings, basis = +s.payDays || 30;
@@ -2754,7 +2829,7 @@ function buildLine(e, ym, old){
   const l = {emp:e.id, basic:+e.basic||0, housing:+e.housing||0, transport:+e.transport||0, other:+e.other||0, payMode:e.payMode||'Bank',
     days:daysIn(ym), unpaidDays:a.unpaid, notEmployed:a.notEmployed, paidLeave:a.L + a.S, otHours: a.ot,
     additions: old?.additions || 0, deductions: old?.deductions || 0, advanceRec: old?.advanceRec ?? 0, note: old?.note || ''};
-  l.sales = staffSales(e.id, ym + '-01', lastDay(ym)); l.commission = commissionOf(e, l.sales);
+  const c = commissionCalc(e, ym + '-01', lastDay(ym)); l.sales = c.sales; l.commission = c.total;
   return calcLine(l);
 }
 function runTotals(r){ const t = {gross:0, unpaidDed:0, otPay:0, sales:0, commission:0, additions:0, deductions:0, advanceRec:0, earned:0, net:0, bank:0, cash:0};
@@ -2765,9 +2840,21 @@ function postRun(r){
   const t = runTotals(r), m = `Payroll ${kName(r.ym)}`, date = lastDay(r.ym);
   const items = [{acc:'6100', desc:m, dr:r2(t.earned - t.commission), cr:0}, ...(t.commission ? [{acc:'6120', desc:m + ' – commission', dr:t.commission, cr:0}] : []), {acc:'2300', desc:m + ' – net pay', dr:0, cr:t.net}];
   if(t.advanceRec) items.push({acc:'1450', desc:m + ' – advances recovered', dr:0, cr:t.advanceRec});
+  // first provision ever: service before this month goes to opening balance equity, only this month's increase is an expense
+  if(DB.settings.accrueEOS !== false && DB.settings.accrueEOS !== 'false' && acc('2400') && !linesOf('2400').some(l => l.date <= date)){
+    const opening = eosProvisionTarget(lastDay(prevKey(r.ym)));
+    if(opening > 0.005) items.push({acc:'3050', desc:m + ' – end of service provision for service before ' + kName(r.ym), dr:opening, cr:0}, {acc:'2400', desc:m + ' – end of service provision brought forward', dr:0, cr:opening});
+  }
+  const eos = r2(eosAccrual(date) - items.filter(i => i.acc === '2400').reduce((t,i) => t + i.cr - i.dr, 0)); r.eos = eos;
+  if(eos > 0) items.push({acc:'6130', desc:m + ' – end of service provision', dr:eos, cr:0}, {acc:'2400', desc:m + ' – end of service provision', dr:0, cr:eos});
+  if(eos < 0) items.push({acc:'2400', desc:m + ' – end of service provision released', dr:-eos, cr:0}, {acc:'6130', desc:m + ' – end of service provision released', dr:0, cr:-eos});
   const v = {id:uid('v'), no:nextNo('JV'), type:'JV', date, due:'', party:'', pname:'', ref:'PAYROLL-' + r.ym, memo:m, payAcc:'', toAcc:'', amount:0, incl:false, items, alloc:[], created:new Date().toISOString(), updated:new Date().toISOString(), payroll:r.id};
   DB.vouchers.push(v); return v;
 }
+
+/* ---------- end of service provision: brings the 2400 balance up to the gratuity earned so far ---------- */
+function eosProvisionTarget(asOf){ return r2(DB.employees.filter(e => !e.settle?.jv && e.join && e.join <= asOf).reduce((s,e) => s + gratuity(e, asOf).amount, 0)); }
+function eosAccrual(asOf){ if(DB.settings.accrueEOS === false || DB.settings.accrueEOS === 'false') return 0; return r2(eosProvisionTarget(asOf) - (acc('2400') ? bal('2400', asOf) : 0)); }
 
 /* ---------- gratuity (UAE private sector, estimate) ---------- */
 function gratuity(e, asOf){
@@ -2794,7 +2881,7 @@ PAGES.employees = () => {
   <section class="panel"><div class="panel-head"><div><h2>Staff</h2><p>Click a name to edit, give an advance or see the payslip history.</p></div>
     <div class="chips">${['Active','Left','All'].map(f => `<button data-act="empf" data-f="${f}" aria-pressed="${state.empf===f}">${f}</button>`).join('')}</div></div>
     ${list.length ? `<div class="tbl-wrap"><table><thead><tr><th>Code</th><th>Name</th><th>Position</th><th>Joined</th><th>Pay</th><th class="r">Basic</th><th class="r">Gross</th><th class="r">Commission</th><th class="r">Advance</th><th class="r">Gratuity est.</th></tr></thead><tbody>
-      ${list.map(e => `<tr data-act="editEmp" data-id="${e.id}"><td class="mini">${esc(e.code)}</td><td>${esc(e.name)}${e.left ? ' <span class="mini">(left)</span>' : ''}</td><td>${esc(e.title)}</td><td>${dLong(e.join)}</td><td>${esc(e.payMode || 'Bank')}</td><td class="r num">${fmt(e.basic)}</td><td class="r num">${fmt(grossOf(e))}</td><td class="r">${+e.commPct ? (+e.commPct) + '%' + (+e.target ? ` over ${fmt(e.target)}` : '') : '<span class="mut">–</span>'}</td><td class="r num">${fmtZ(advanceBalance(e.id))}</td><td class="r num">${fmtZ(gratuity(e, t).amount)}</td></tr>`).join('')}</tbody></table></div>`
+      ${list.map(e => `<tr data-act="editEmp" data-id="${e.id}"><td class="mini">${esc(e.code)}</td><td>${esc(e.name)}${e.left ? ' <span class="mini">(left)</span>' : ''}</td><td>${esc(e.title)}</td><td>${dLong(e.join)}</td><td>${esc(e.payMode || 'Bank')}</td><td class="r num">${fmt(e.basic)}</td><td class="r num">${fmt(grossOf(e))}</td><td class="r">${+e.commPct || +e.prodPct ? [+e.commPct ? (+e.commPct) + '%' + (+e.target ? ` ${e.commBasis === 'all' ? 'once' : e.commBasis === 'flat' ? '' : 'over'} ${fmt(e.target)}` : '') : '', +e.prodPct ? (+e.prodPct) + '% products' : ''].filter(Boolean).join(' · ') : '<span class="mut">–</span>'}</td><td class="r num">${fmtZ(advanceBalance(e.id))}</td><td class="r num">${fmtZ(gratuity(e, t).amount)}</td></tr>`).join('')}</tbody></table></div>`
     : empty('No employees yet', `Click Employee to add your staff.${DB.employees.length ? '' : ' <br><button class="btn ghost sm" data-act="sampleStaff" style="margin-top:12px">Add 3 sample staff for a demo</button>'}`)}</section>
   <p class="help">Gratuity follows the UAE private-sector rule (21 days' basic per year for the first 5 years, 30 days after, after one year of service) and is an estimate only.</p>`;
 };
@@ -2808,7 +2895,9 @@ function empDlg(e){
     <h3 style="font:400 20px var(--serif);margin:18px 0 6px">Monthly salary (${esc(DB.settings.cur)})</h3>
     <div class="grid4">${fld('Basic', inp('basic', e.basic, 'type="number" step="0.01" min="0" required'))}${fld('Housing allowance', inp('housing', e.housing, 'type="number" step="0.01" min="0"'))}${fld('Transport allowance', inp('transport', e.transport, 'type="number" step="0.01" min="0"'))}${fld('Other allowance', inp('other', e.other, 'type="number" step="0.01" min="0"'))}</div>
     <h3 style="font:400 20px var(--serif);margin:18px 0 6px">Commission on sales</h3>
-    <div class="grid4">${fld('Commission %', inp('commPct', e.commPct, 'type="number" step="0.01" min="0" placeholder="0"'))}${fld('Only on monthly sales above', inp('target', e.target, 'type="number" step="0.01" min="0" placeholder="0"'))}<p class="help" style="grid-column:span 2;margin:22px 0 0">Tag sales lines with this employee. Payroll pays the % on their monthly sales (before VAT) above the target.</p></div>
+    <div class="grid4">${fld('Service commission %', inp('commPct', e.commPct, 'type="number" step="0.01" min="0" placeholder="0"'))}${fld('Monthly service target', inp('target', e.target, 'type="number" step="0.01" min="0" placeholder="0"'))}
+      ${fld('How the target works', `<select name="commBasis">${Object.entries(COMM_BASIS).map(([k,l]) => opt(k, l, e.commBasis || 'above')).join('')}</select>`)}${fld('Product commission %', inp('prodPct', e.prodPct, 'type="number" step="0.01" min="0" placeholder="0"'))}</div>
+    <p class="help" style="margin:8px 0 0">Tag each sales line with this employee. Service sales are all income lines except product sales (account 4100); commission is worked out on monthly sales before VAT, less credit notes.</p>
     <h3 style="font:400 20px var(--serif);margin:18px 0 6px">Payment</h3>
     <div class="grid4">${fld('Paid by', `<select name="payMode">${opt('Bank','Bank (WPS)',e.payMode||'Bank')}${opt('Cash','Cash',e.payMode||'Bank')}</select>`)}${fld('Bank', inp('bank', e.bank))}${fld('IBAN', inp('iban', e.iban, 'placeholder="AE.."'))}${fld('Labour card / person ID', inp('labourId', e.labourId))}</div>
     <div style="margin-top:12px">${fld('Notes', inp('notes', e.notes))}</div>
@@ -2816,7 +2905,9 @@ function empDlg(e){
       <div><h3 style="font:400 20px var(--serif);margin:0 0 6px">Advances <span class="mini">balance ${fmt(advanceBalance(e.id))}</span></h3>${adv.length ? adv.map(a => `<div class="pl-row"><span>${dLong(a.date)} <span class="mini">${esc(a.note)}</span></span><span class="num">${fmt(a.amount)}</span></div>`).join('') : '<p class="mini">None.</p>'}
         <div class="row-flex" style="margin-top:8px;align-items:flex-end"><div class="field" style="width:120px"><label>Amount</label><input name="advAmt" type="number" step="0.01" min="0"></div><div class="field" style="width:150px"><label>Paid from</label><select name="advAcc">${accOptions(a => a.role === 'cash' || a.role === 'bank', '1000')}</select></div><button type="button" class="btn ghost sm" data-act="giveAdvance" data-id="${e.id}">Give advance</button></div></div></div>
       <p class="mini" style="margin-top:8px">Gratuity estimate today: ${money(gratuity(e, t).amount)} after ${gratuity(e, t).years.toFixed(1)} years.</p>` : ''}
-    <div class="dlg-foot" style="margin-top:18px">${!isNew && !runs.length && !adv.length ? `<button type="button" class="btn danger" data-act="delEmp" data-id="${e.id}">Delete</button>` : ''}<button type="button" class="btn ghost" data-act="close">Cancel</button><button class="btn" type="submit">${isNew ? 'Add employee' : 'Save'}</button></div></form>`;
+    <div class="dlg-foot" style="margin-top:18px">${!isNew && !runs.length && !adv.length ? `<button type="button" class="btn danger" data-act="delEmp" data-id="${e.id}">Delete</button>` : ''}
+      ${!isNew ? `<button type="button" class="btn ghost" data-act="salaryCert" data-id="${e.id}">${ic('print',15)}Salary certificate</button>` : ''}
+      ${!isNew && e.left ? `<button type="button" class="btn ghost" data-act="settle" data-id="${e.id}">Final settlement${e.settle?.jv ? (e.settle.pay ? ' (paid)' : ' (approved)') : ''}</button>` : ''}<button type="button" class="btn ghost" data-act="close">Cancel</button><button class="btn" type="submit">${isNew ? 'Add employee' : 'Save'}</button></div></form>`;
 }
 
 PAGES.attendance = () => {
@@ -2850,18 +2941,19 @@ PAGES.payroll = () => {
   <section class="panel"><div class="panel-head"><div><h2>Payroll, ${kName(ym)}</h2><p>${ed ? 'Edit overtime, additions and deductions, then approve.' : 'Approved payroll is posted to the accounts and can no longer be edited.'}</p></div>
     <div class="row-btns no-print">${ed ? `<button class="btn ghost sm" data-act="refreshRun">Refresh from attendance</button><button class="btn ghost sm danger" data-act="delRun">Delete draft</button><button class="btn sm" data-act="approveRun">Approve and post</button>` : ''}
       ${run.status === 'Approved' ? `<button class="btn ghost sm" data-act="unapproveRun">Back to draft</button><button class="btn sm" data-act="payRun">Pay salaries</button>` : ''}
-      <button class="btn ghost sm" data-act="payslip" data-run="${run.id}">${ic('print',15)}Payslips</button><button class="btn ghost sm" data-act="dlPayroll">${ic('down',15)}Excel</button></div></div>
+      <button class="btn ghost sm" data-act="payslip" data-run="${run.id}">${ic('print',15)}Payslips</button><button class="btn ghost sm" data-act="printRegister">${ic('print',15)}Salary register</button><button class="btn ghost sm" data-act="dlPayroll">${ic('down',15)}Excel</button></div></div>
     <div class="tbl-wrap"><table class="payt"><thead><tr><th>Employee</th><th class="r">Gross</th><th class="r">Unpaid days</th><th class="r">Deducted</th><th class="r">OT hours</th><th class="r">OT pay</th><th class="r">Staff sales</th><th class="r">Commission</th><th class="r">Additions</th><th class="r">Deductions</th><th class="r">Advance</th><th class="r">Net pay</th><th>Paid by</th></tr></thead><tbody>
     ${run.lines.map((l,i) => { const e = emp(l.emp) || {name:'Deleted employee'}; const n = (k, w=78) => ed ? `<input type="number" step="0.01" min="0" value="${l[k] || ''}" data-change="payline" data-i="${i}" data-k="${k}" style="width:${w}px;text-align:right;border:1px solid var(--line);border-radius:6px;padding:4px 6px">` : fmtZ(l[k]);
       return `<tr><td style="white-space:nowrap">${esc(e.name)}${l.note ? `<br><span class="mini">${esc(l.note)}</span>` : ''}</td><td class="r num">${fmt(l.gross)}</td><td class="r num">${(+l.unpaidDays||0) + (+l.notEmployed||0) || '–'}</td><td class="r num out">${fmtZ(l.unpaidDed)}</td>
         <td class="r num">${n('otHours', 60)}</td><td class="r num in">${fmtZ(l.otPay)}</td><td class="r num">${fmtZ(l.sales)}</td><td class="r num">${n('commission')}</td><td class="r num">${n('additions')}</td><td class="r num">${n('deductions')}</td><td class="r num">${n('advanceRec')}${ed && advanceBalance(l.emp, run.id) ? `<br><span class="mini">owes ${fmt(advanceBalance(l.emp, run.id))}</span>` : ''}</td>
         <td class="r num"><b>${fmt(l.net)}</b></td><td>${esc(l.payMode)}</td></tr>`; }).join('')}</tbody>
     <tfoot><tr><td>Total</td><td class="r num">${fmt(t.gross)}</td><td></td><td class="r num">${fmt(t.unpaidDed)}</td><td></td><td class="r num">${fmt(t.otPay)}</td><td class="r num">${fmt(t.sales)}</td><td class="r num">${fmt(t.commission)}</td><td class="r num">${fmt(t.additions)}</td><td class="r num">${fmt(t.deductions)}</td><td class="r num">${fmt(t.advanceRec)}</td><td class="r num">${fmt(t.net)}</td><td></td></tr></tfoot></table></div>
-    ${run.jv ? `<p class="help" style="margin-top:12px">Posted as ${(() => { const v = vById(run.jv); return v ? `<button class="link" data-act="editV" data-id="${v.id}">${esc(v.no)}</button>` : 'a deleted journal'; })()}: salaries expense ${money(t.earned)}, net pay owed ${money(t.net)}${t.advanceRec ? `, advances recovered ${money(t.advanceRec)}` : ''}.${(run.pays||[]).length ? ' Paid by ' + run.pays.map(id => vById(id)).filter(Boolean).map(v => `<button class="link" data-act="editV" data-id="${v.id}">${esc(v.no)}</button>`).join(', ') + '.' : ''}</p>` : ''}</section>`) +
-  (() => { const rows = DB.employees.filter(e => activeIn(e, ym)).map(e => ({e, sales: staffSales(e.id, ym+'-01', lastDay(ym))})).filter(x => x.sales || +x.e.commPct);
-    return rows.length ? `<section class="panel"><div class="panel-head"><div><h2>Sales by staff, ${kName(ym)}</h2><p>Sales and invoice lines tagged with each employee, before VAT.</p></div></div>
-      <div class="tbl-wrap"><table><thead><tr><th>Employee</th><th class="r">Sales</th><th class="r">Rate</th><th class="r">Target</th><th class="r">Commission</th></tr></thead><tbody>
-      ${rows.map(x => `<tr><td>${esc(x.e.name)}</td><td class="r num">${fmt(x.sales)}</td><td class="r">${+x.e.commPct || 0}%</td><td class="r num">${fmtZ(x.e.target)}</td><td class="r num"><b>${fmt(commissionOf(x.e, x.sales))}</b></td></tr>`).join('')}</tbody></table></div></section>` : ''; })() +
+    ${run.jv ? `<p class="help" style="margin-top:12px">Posted as ${(() => { const v = vById(run.jv); return v ? `<button class="link" data-act="editV" data-id="${v.id}">${esc(v.no)}</button>` : 'a deleted journal'; })()}: salaries expense ${money(t.earned)}, net pay owed ${money(t.net)}${t.advanceRec ? `, advances recovered ${money(t.advanceRec)}` : ''}${(() => { const j = vById(run.jv), x = j ? r2(j.items.filter(i => i.acc === '6130').reduce((s,i)=>s+i.dr-i.cr,0)) : 0; return x ? `, end of service provision ${money(x)}` : ''; })()}.${(run.pays||[]).length ? ' Paid by ' + run.pays.map(id => vById(id)).filter(Boolean).map(v => `<button class="link" data-act="editV" data-id="${v.id}">${esc(v.no)}</button>`).join(', ') + '.' : ''}</p>` : ''}</section>`) +
+  (() => { const rows = DB.employees.filter(e => activeIn(e, ym)).map(e => ({e, c: commissionCalc(e, ym+'-01', lastDay(ym))})).filter(x => x.c.lines.length || +x.e.commPct || +x.e.prodPct);
+    return rows.length ? `<section class="panel"><div class="panel-head"><div><h2>Commission, ${kName(ym)}</h2><p>Every sales receipt, invoice and credit note line tagged with the employee, before VAT. Click a name for the full statement.</p></div></div>
+      <div class="tbl-wrap"><table><thead><tr><th>Employee</th><th class="r">Lines</th><th class="r">Service sales</th><th class="r">Target</th><th>Basis</th><th class="r">Service %</th><th class="r">Service comm.</th><th class="r">Product sales</th><th class="r">Product %</th><th class="r">Product comm.</th><th class="r">Commission</th></tr></thead><tbody>
+      ${rows.map(({e, c}) => `<tr data-act="commStmt" data-id="${e.id}" data-ym="${ym}"><td><button class="link">${esc(e.name)}</button></td><td class="r num">${c.lines.length}</td><td class="r num">${fmt(c.svc)}</td><td class="r num">${fmtZ(c.target)}</td><td class="mini">${({above:'Above target', all:'All, once target met', flat:'All sales'})[c.basis]}</td><td class="r">${c.pct}%</td><td class="r num">${fmtZ(c.commSvc)}</td><td class="r num">${fmtZ(c.prod)}</td><td class="r">${c.ppct}%</td><td class="r num">${fmtZ(c.commProd)}</td><td class="r num"><b>${fmt(c.total)}</b></td></tr>`).join('')}</tbody></table></div>
+      <p class="help" style="margin-top:10px">Tag each sale line with the staff member in Cash book, Sales cash and Invoices. Credit notes tagged with the same person reduce the commission. Payroll picks up these amounts when created or refreshed.</p></section>` : ''; })() +
   `<section class="panel"><div class="panel-head"><div><h2>Payroll rules</h2><p>Change them under Settings → Payroll.</p></div></div>
     <div class="pl-row"><span>Day rate for unpaid days</span><span>Monthly ${DB.settings.deductBasis === 'basic' ? 'basic' : 'gross'} ÷ ${DB.settings.payDays}</span></div>
     <div class="pl-row"><span>Overtime rate</span><span>Basic ÷ ${DB.settings.payDays} ÷ ${DB.settings.hoursDay} hours × ${DB.settings.otMult}</span></div>
@@ -2869,7 +2961,7 @@ PAGES.payroll = () => {
 };
 
 /* ---------- payslip ---------- */
-function payslipHTML(run, ids){
+function payslipHTML_v1(run, ids){
   const s = DB.settings;
   return run.lines.filter(l => !ids || ids.includes(l.emp)).map(l => { const e = emp(l.emp) || {}; const a = e.id ? attSummary(e, run.ym) : {};
     return `<div class="inv" style="page-break-after:always"><div class="ih"><div><img src="${LOGO_DARK}" alt="" style="height:70px;margin-bottom:6px"><h1>${esc(s.legal || s.biz)}</h1>${s.address ? `<div>${esc(s.address)}</div>` : ''}</div><div class="t"><h2>PAYSLIP</h2><div><b>${kName(run.ym)}</b></div><div>Paid by ${esc(l.payMode)}</div></div></div>
@@ -2969,7 +3061,7 @@ document.addEventListener('submit', e => {
     const id = f.dataset.id, x = id ? emp(id) : {id:uid('e')};
     if(!v.name.trim()) return toast('Enter the name.'); if(!v.join) return toast('Enter the joining date.');
     Object.assign(x, {code:v.code.trim(), name:v.name.trim(), title:v.title.trim(), dept:v.dept.trim(), phone:v.phone.trim(), join:v.join, left:v.left, basic:r2(num(v.basic)), housing:r2(num(v.housing)), transport:r2(num(v.transport)), other:r2(num(v.other)),
-      payMode:v.payMode, bank:v.bank.trim(), iban:v.iban.replace(/\s+/g,'').toUpperCase(), labourId:v.labourId.trim(), notes:v.notes.trim(), commPct:r2(num(v.commPct)), target:r2(num(v.target))});
+      payMode:v.payMode, bank:v.bank.trim(), iban:v.iban.replace(/\s+/g,'').toUpperCase(), labourId:v.labourId.trim(), notes:v.notes.trim(), commPct:r2(num(v.commPct)), target:r2(num(v.target)), commBasis:v.commBasis || 'above', prodPct:r2(num(v.prodPct))});
     if(!id) DB.employees.push(x); audit(id ? 'Changed' : 'Added', null, 'Employee ' + x.name); closeDlg(); commit(x.name + (id ? ' saved' : ' added'));
   }
   if(kind === 'weekoff'){ DB.settings.weekOff = [0,1,2,3,4,5,6].filter(i => f.elements['d'+i].checked).join(','); closeDlg(); commit('Weekly off day saved'); }
@@ -2982,7 +3074,7 @@ document.addEventListener('submit', e => {
   }
 });
 
-function payrollRef(vid){ return DB.payruns.some(r => r.jv === vid || (r.pays||[]).includes(vid)) || DB.advances.some(a => a.jv === vid); }
+function payrollRef(vid){ return DB.payruns.some(r => r.jv === vid || (r.pays||[]).includes(vid)) || DB.advances.some(a => a.jv === vid) || DB.employees.some(e => e.settle?.jv === vid); }
 function payrollYearWB(y){
   const wb = XLSX.utils.book_new();
   DB.payruns.filter(r => r.ym.startsWith(String(y))).sort((a,b)=>a.ym<b.ym?-1:1).forEach(r => { const w = payrollWB(r); XLSX.utils.book_append_sheet(wb, w.Sheets['Payroll'], MON[+r.ym.slice(5)-1] + ' ' + r.status); });
@@ -3036,6 +3128,7 @@ function loadSampleData(){
   addE('lina', 'S-104', 'Lina Haddad', 'Hair stylist', 2400, 1000, 400, 0, 'Bank', 8, 3000, '2022-02-01', '2026-08-15', 3);
   addE('grace', 'S-105', 'Grace Mwangi', 'Make-up artist', 2500, 1000, 400, 0, 'Bank', 10, 3500, '2026-08-10', '', 4);
   addE('noorf', 'S-106', 'Noor Fatima', 'Receptionist', 1800, 800, 300, 200, 'Cash', 0, 0, '2024-09-01', '', 5);
+  E.noorf.prodPct = 5; E.grace.commBasis = 'all'; E.priya.commBasis = 'above'; E.maria.prodPct = 3;
   const SERV = {
     maria:[['Haircut and blow-dry', 120, 180], ['Hair colour', 280, 450], ['Keratin treatment', 600, 900], ['Highlights', 350, 550]],
     lina:[['Haircut and blow-dry', 110, 160], ['Hair styling', 150, 250], ['Hair spa', 180, 260]],
@@ -3124,10 +3217,18 @@ function loadSampleData(){
     const inv = add({type:'INV', date, party:c.id, due:addDays(date, c.terms), ref:'PO-' + between(3000, 3999, 1), memo:'', items:rows.map(([desc, qty, rate, sk]) => ({acc:'4000', desc, qty, rate, vat:'SR', vr:VR, staff:E[sk].id}))});
     if(paid){ const amt = paid === 'part' ? 4000 : docTotal(inv), pd = addDays(date, Math.min(c.terms, 18));
       add({type:'RCPT', date:pd, party:c.id, payAcc:'1100', amount:amt, alloc:[{doc:inv.id, amt}], ref:'TT ' + between(70000, 79999, 1), memo:paid === 'part' ? 'Part payment' : ''}); } }
+  // a credit note (discount agreed after the event) and a supplier debit note (damaged stock returned)
+  const fInv = V.find(v => v.type === 'INV' && v.party === C.fatima.id);
+  const cn = add({type:'CN', date:'2026-09-05', party:C.fatima.id, ref:fInv.no, memo:'Discount agreed for late start', items:[{acc:'4000', desc:'Discount on engagement party package', qty:1, rate:200, vat:'SR', vr:VR, staff:E.grace.id}]});
+  cn.alloc = [{doc:fInv.id, amt:docTotal(cn)}];
+  const gBill = V.find(v => v.type === 'BILL' && v.party === C.gulf.id && v.date === '2026-09-05');
+  const dn = add({type:'DN', date:'2026-09-09', party:C.gulf.id, ref:gBill.no, memo:'Damaged hair colour tubes returned', items:[{acc:'5000', desc:'Hair colour tubes returned (damaged)', amount:250, vat:'SR', vr:VR}]});
+  dn.alloc = [{doc:gBill.id, amt:docTotal(dn)}];
 
   /* number in date order and add to the books */
   V.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : (a.first ? -1 : b.first ? 1 : 0));
   for(const v of V){ v.no = nextNo(v.type); DB.vouchers.push(v); }
+  cn.ref = fInv.no; dn.ref = gBill.no;
   invalidate();
 
   /* ---- payroll: July and August paid, September approved and waiting to be paid ---- */
@@ -3140,6 +3241,20 @@ function loadSampleData(){
       if(t.bank) r.pays.push(mk('1100', t.bank, 'bank / WPS')); if(t.cash) r.pays.push(mk('1000', t.cash, 'cash')); r.status = 'Paid'; }
     invalidate(); }
   for(const e of Object.values(E)) delete e._off;
+
+  /* ---- depreciation of the equipment bought in August ---- */
+  for(const ym of ['2026-08', '2026-09']){ const date = lastDay(ym), amt = r2(bal('1500', date) / ((+DB.settings.depYears || 5) * 12)); if(!(amt > 0) || DB.vouchers.some(v => v.ref === 'DEP-' + ym)) continue;
+    DB.vouchers.push({id:id('v'), no:nextNo('JV'), type:'JV', date, due:'', party:'', pname:'', ref:'DEP-' + ym, memo:`Depreciation ${kName(ym)}`, payAcc:'', toAcc:'', amount:0, incl:false,
+      items:[{acc:'6960', desc:`Depreciation ${kName(ym)} (sample)`, dr:amt, cr:0}, {acc:'1590', desc:`Depreciation ${kName(ym)} (sample)`, dr:0, cr:amt}], alloc:[], created:now, updated:now}); invalidate(); }
+
+  /* ---- final settlement for the stylist who left on 15 August, paid on 20 August ---- */
+  { const e = E.lina, x = settleCalc(e, {leaveDays:8, add:0, ded:0, note:''}), prov = Math.max(0, Math.min(x.grat, bal('2400', '2026-12-31'))), m = `Final settlement ${e.name}`;
+    const items = [prov ? {acc:'2400', desc:m + ' – gratuity from provision', dr:r2(prov), cr:0} : null, x.grat - prov + x.leavePay > 0.005 ? {acc:'6130', desc:m + ' – gratuity and leave pay', dr:r2(x.grat - prov + x.leavePay), cr:0} : null,
+      x.adv ? {acc:'1450', desc:m + ' – advances recovered', dr:0, cr:x.adv} : null, {acc:'2300', desc:m + ' – net payable', dr:0, cr:x.net}].filter(Boolean);
+    const jv = {id:id('v'), no:nextNo('JV'), type:'JV', date:x.date, due:'', party:'', pname:e.name, ref:'SETTLE-' + e.code, memo:m, payAcc:'', toAcc:'', amount:0, incl:false, items, alloc:[], created:now, updated:now};
+    DB.vouchers.push(jv); invalidate();
+    const pay = {id:id('v'), no:nextNo('TRF'), type:'TRF', date:'2026-08-20', due:'', party:'', pname:'', ref:'SETTLE-' + e.code, memo:m, payAcc:'1100', toAcc:'2300', amount:x.net, incl:false, items:[], alloc:[], created:now, updated:now};
+    DB.vouchers.push(pay); e.settle = Object.assign({}, x, {jv:jv.id, pay:pay.id}); invalidate(); }
 
   /* ---- bank statement for July–September, last week of September still to match ---- */
   if(!DB.statement.some(s => s.acc === '1100' && s.date >= FROM && s.date <= TO)){
@@ -3185,13 +3300,268 @@ Object.assign(ACT, {
 });
 
 /* =====================================================================
+   docs.js — printable documents: vouchers, statements, payslips,
+   salary register, commission statements, final settlement, salary
+   certificate; depreciation; amount in words
+   ===================================================================== */
+
+/* ---------- amount in words (UAE Dirhams and fils) ---------- */
+function numWords(n){
+  const a = ['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
+  const b = ['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];
+  const h = x => { let s = ''; if(x >= 100){ s = a[Math.floor(x/100)] + ' Hundred'; x %= 100; if(x) s += ' and '; } if(x >= 20){ s += b[Math.floor(x/10)]; if(x % 10) s += '-' + a[x % 10]; } else if(x) s += a[x]; return s; };
+  if(n === 0) return 'Zero';
+  const parts = [[1e9,'Billion'],[1e6,'Million'],[1e3,'Thousand']]; let out = [];
+  for(const [v, w] of parts){ if(n >= v){ out.push(h(Math.floor(n / v)) + ' ' + w); n %= v; } }
+  if(n) out.push((out.length && n < 100 ? 'and ' : '') + h(n));
+  return out.join(' ');
+}
+function amountWords(x){
+  const neg = x < 0; x = Math.abs(r2(x)); const whole = Math.floor(x), fils = Math.round((x - whole) * 100);
+  const cur = DB.settings.cur === 'AED' ? 'UAE Dirhams' : DB.settings.cur;
+  return (neg ? 'Minus ' : '') + cur + ' ' + numWords(whole) + (fils ? ' and Fils ' + numWords(fils) : '') + ' Only';
+}
+
+/* ---------- shared pieces ---------- */
+const docHead = (title, right = '') => { const s = DB.settings;
+  return `<div class="ih"><div><img src="${LOGO_DARK}" alt="" style="height:76px;margin-bottom:6px"><h1>${esc(s.legal || s.biz)}</h1>${s.address ? `<div>${esc(s.address).replace(/\n/g,'<br>')}</div>` : ''}${s.phone || s.email ? `<div>${esc([s.phone, s.email].filter(Boolean).join(' · '))}</div>` : ''}${s.trn ? `<div><b>TRN</b> ${esc(s.trn)}</div>` : ''}</div>
+    <div class="t"><h2>${title}</h2>${right}</div></div>`; };
+const sigs = labels => `<div class="sigs">${labels.map(l => `<div><span></span>${esc(l)}</div>`).join('')}</div>`;
+const postingTable = v => { const L = post(v); return L.length ? `<table class="small"><thead><tr><th>Account</th><th>Details</th><th class="r">Debit</th><th class="r">Credit</th></tr></thead><tbody>
+  ${L.map(l => `<tr><td>${esc(accLabel(l.acc))}</td><td>${esc(l.desc)}${l.party ? ' · ' + esc(contact(l.party)?.name || '') : ''}</td><td class="r">${fmtZ(l.dr)}</td><td class="r">${fmtZ(l.cr)}</td></tr>`).join('')}</tbody></table>` : ''; };
+const mask = iban => iban ? iban.replace(/\s+/g,'').replace(/^(.{4}).*(.{4})$/, '$1 •••• •••• $2') : '';
+
+/* ---------- any entry as a printable voucher ---------- */
+function voucherHTML(v){
+  const s = DB.settings, T = {SAL:'SALES RECEIPT', EXP:'PAYMENT VOUCHER', BILL:'PURCHASE VOUCHER', RCPT:'RECEIPT VOUCHER', PAY:'PAYMENT VOUCHER', TRF:'TRANSFER VOUCHER', JV:'JOURNAL VOUCHER', NOTE:'CASH BOOK NOTE', DN: s.vatOn && s.trn ? 'TAX DEBIT NOTE' : 'DEBIT NOTE'}[v.type] || TYPES[v.type].name.toUpperCase();
+  const total = docTotal(v), who = contactName(v), c = contact(v.party);
+  const meta = [['Number', v.no], ['Date', dLong(v.date)], v.due && v.type === 'BILL' ? ['Due', dLong(v.due)] : null, v.ref ? ['Reference', v.ref] : null,
+    ['SAL','EXP','RCPT','PAY'].includes(v.type) ? [v.type === 'SAL' || v.type === 'RCPT' ? 'Received into' : 'Paid from', accName(v.payAcc)] : null,
+    v.type === 'TRF' ? ['From', accName(v.payAcc)] : null, v.type === 'TRF' ? ['To', accName(v.toAcc)] : null].filter(Boolean);
+  let body = '';
+  if(['SAL','EXP','BILL','DN'].includes(v.type)){ const t = totals(v);
+    body = `<table><thead><tr><th>Description</th><th>Account</th>${v.type === 'SAL' ? '<th>Staff</th>' : ''}${t.tax ? '<th class="r">Net</th><th class="r">VAT</th>' : ''}<th class="r">Amount ${esc(s.cur)}</th></tr></thead><tbody>
+      ${t.rows.map(r => `<tr><td>${esc(r.it.desc || '')}</td><td>${esc(accName(r.it.acc))}</td>${v.type === 'SAL' ? `<td>${esc(emp(r.it.staff)?.name || '')}</td>` : ''}${t.tax ? `<td class="r">${fmt(r.net)}</td><td class="r">${fmt(r.tax)}</td>` : ''}<td class="r">${fmt(r.gross)}</td></tr>`).join('')}</tbody></table>
+      <div class="tt">${t.tax ? `<div><span>Net</span><span>${fmt(t.net)}</span></div><div><span>VAT</span><span>${fmt(t.tax)}</span></div>` : ''}<div class="g"><span>Total ${esc(s.cur)}</span><span>${fmt(t.total)}</span></div></div>`; }
+  if(v.type === 'RCPT' || v.type === 'PAY'){
+    body = `<p class="lead">${v.type === 'RCPT' ? 'Received with thanks from' : 'Paid to'} <b>${esc(who)}</b> the sum of <b>${esc(s.cur)} ${fmt(v.amount)}</b>${v.memo ? ' towards ' + esc(v.memo) : ''}.</p>
+      ${(v.alloc||[]).length ? `<table><thead><tr><th>${v.type === 'RCPT' ? 'Invoice' : 'Bill'}</th><th>Date</th><th class="r">Document total</th><th class="r">Applied</th></tr></thead><tbody>
+        ${v.alloc.map(a => { const d = vById(a.doc); return `<tr><td>${esc(d?.no || '')}${d?.ref && v.type === 'PAY' ? ' (' + esc(d.ref) + ')' : ''}</td><td>${d ? dLong(d.date) : ''}</td><td class="r">${d ? fmt(docTotal(d)) : ''}</td><td class="r">${fmt(a.amt)}</td></tr>`; }).join('')}</tbody></table>` : ''}
+      ${r2(v.amount - (v.alloc||[]).reduce((t,a)=>t+a.amt,0)) > 0.005 ? `<p class="mini">${fmt(v.amount - v.alloc.reduce((t,a)=>t+a.amt,0))} kept as an advance on account.</p>` : ''}
+      <div class="tt"><div class="g"><span>Amount ${esc(s.cur)}</span><span>${fmt(v.amount)}</span></div></div>`; }
+  if(v.type === 'TRF') body = `<p class="lead">${esc(v.memo || 'Transfer between accounts')}</p><div class="tt"><div class="g"><span>Amount ${esc(s.cur)}</span><span>${fmt(v.amount)}</span></div></div>`;
+  if(v.type === 'JV') body = `${v.memo ? `<p class="lead">${esc(v.memo)}</p>` : ''}<div class="tt"><div class="g"><span>Total ${esc(s.cur)}</span><span>${fmt(total)}</span></div></div>`;
+  if(v.type === 'NOTE') body = `<p class="lead">${esc(v.memo)}</p>`;
+  const party = who ? `<div class="party"><b>${['RCPT','SAL'].includes(v.type) ? 'From' : v.type === 'JV' ? 'Name' : 'Payee'}</b><br>${esc(who)}${c?.address ? '<br>' + esc(c.address).replace(/\n/g,'<br>') : ''}${c?.trn ? '<br>TRN ' + esc(c.trn) : ''}</div>` : '';
+  const sg = {RCPT:['Received by','Customer'], PAY:['Prepared by','Approved by','Received by'], EXP:['Prepared by','Approved by','Received by'], SAL:['Cashier','Customer'], TRF:['Prepared by','Approved by'], JV:['Prepared by','Approved by'], BILL:['Entered by','Approved by'], DN:['Prepared by','Supplier acknowledgement'], NOTE:['Prepared by']}[v.type] || ['Prepared by','Approved by'];
+  return `<div class="inv">${docHead(T, `<div><b>${esc(v.no)}</b></div><div>${dLong(v.date)}</div>`)}
+    <div class="doc-meta">${party}<table class="kvt">${meta.map(([k,x]) => `<tr><td>${k}</td><td>${esc(x)}</td></tr>`).join('')}</table></div>
+    ${body}${v.type === 'NOTE' ? '' : `<p class="words">${esc(amountWords(v.type === 'JV' ? total : total))}</p>`}
+    ${v.type === 'NOTE' ? '' : `<h4>Accounting entries</h4>${postingTable(v)}`}
+    ${sigs(sg)}<div class="foot">Printed ${new Date().toLocaleString()} by ${esc(userName())}</div></div>`;
+}
+
+/* ---------- statement of account with ageing ---------- */
+function statementHTML(c){
+  const s = DB.settings, st = contactStatement(c), isSup = c.kind === 'supplier', today = todayISO();
+  const ag = ageing(isSup ? 'BILL' : 'INV', today); const mine = ag.rows.filter(r => r.v.party === c.id), b = {'Not due':0,'1–30':0,'31–60':0,'61–90':0,'Over 90':0};
+  mine.forEach(r => b[r.bucket] = r2(b[r.bucket] + r.out));
+  return `<div class="inv">${docHead('STATEMENT OF ACCOUNT', `<div>As at ${dLong(today)}</div>`)}
+    <div class="doc-meta"><div class="party"><b>${isSup ? 'Supplier' : 'Customer'}</b><br>${esc(c.name)}${c.address ? '<br>' + esc(c.address).replace(/\n/g,'<br>') : ''}${c.trn ? '<br>TRN ' + esc(c.trn) : ''}</div>
+      <table class="kvt"><tr><td>Payment terms</td><td>${+c.terms || 0} days</td></tr><tr><td>${isSup ? 'We owe' : 'Balance due'}</td><td><b>${esc(s.cur)} ${fmt(st.bal)}</b></td></tr></table></div>
+    <table><thead><tr><th>Date</th><th>Document</th><th>Details</th><th class="r">Debit</th><th class="r">Credit</th><th class="r">Balance</th></tr></thead><tbody>
+    ${st.rows.map(r => `<tr><td>${dLong(r.l.date)}</td><td>${esc(r.l.v.no)}</td><td>${esc(TYPES[r.l.v.type].name)}${r.l.v.ref ? ' · ' + esc(r.l.v.ref) : ''}</td><td class="r">${fmtZ(r.l.dr)}</td><td class="r">${fmtZ(r.l.cr)}</td><td class="r">${fmt(r.b)}</td></tr>`).join('')}</tbody></table>
+    <table class="small"><thead><tr>${Object.keys(b).map(k => `<th class="r">${k === 'Not due' ? 'Not yet due' : k + ' days'}</th>`).join('')}<th class="r">Total open</th></tr></thead><tbody><tr>${Object.values(b).map(x => `<td class="r">${fmtZ(x)}</td>`).join('')}<td class="r"><b>${fmt(Object.values(b).reduce((t,x)=>t+x,0))}</b></td></tr></tbody></table>
+    <div class="tt"><div class="g"><span>Balance ${esc(s.cur)}</span><span>${fmt(st.bal)}</span></div></div><p class="words">${esc(amountWords(st.bal))}</p>
+    <div class="foot">${isSup ? '' : 'Please let us know within 14 days if anything on this statement does not agree with your records.'}${s.bankDetails && !isSup ? `<br><b>Bank details</b><br>${esc(s.bankDetails).replace(/\n/g,'<br>')}` : ''}</div></div>`;
+}
+
+/* ---------- payslip ---------- */
+function payslipHTML(run, ids){
+  const s = DB.settings, basis = +s.payDays || 30;
+  return run.lines.filter(l => !ids || ids.includes(l.emp)).map(l => { const e = emp(l.emp) || {}; const a = e.id ? attSummary(e, run.ym) : {};
+    const dayRate = ((s.deductBasis === 'basic' ? +l.basic : l.gross) || 0) / basis, unpaid = (+l.unpaidDays||0) + (+l.notEmployed||0), paidDays = (+l.days||daysIn(run.ym)) - unpaid;
+    const c = e.id ? commissionCalc(e, run.ym + '-01', lastDay(run.ym)) : null, manual = c && Math.abs(c.total - (+l.commission||0)) > 0.005;
+    const earn = r2(l.gross + l.otPay + (+l.commission||0) + (+l.additions||0)), ded = r2(l.unpaidDed + (+l.deductions||0) + (+l.advanceRec||0));
+    const ytd = DB.payruns.filter(r => r.ym.slice(0,4) === run.ym.slice(0,4) && r.ym <= run.ym && (r.status !== 'Draft' || r.id === run.id)).flatMap(r => r.lines.filter(x => x.emp === l.emp));
+    const g = e.id ? gratuity(e, lastDay(run.ym)) : {amount:0, years:0};
+    return `<div class="inv slip" style="page-break-after:always">${docHead('PAYSLIP', `<div><b>${kName(run.ym)}</b></div><div>No. PS-${run.ym.replace('-','')}-${esc(e.code||'')}</div><div>${run.status}</div>`)}
+    <table class="kvt two"><tr><td>Employee</td><td><b>${esc(e.name)}</b></td><td>Code</td><td>${esc(e.code)}</td></tr><tr><td>Position</td><td>${esc(e.title)}${e.dept ? ', ' + esc(e.dept) : ''}</td><td>Joined</td><td>${dLong(e.join)}</td></tr>
+      <tr><td>Labour card / ID</td><td>${esc(e.labourId || '–')}</td><td>Paid by</td><td>${esc(l.payMode)}${l.payMode !== 'Cash' && e.iban ? ' · ' + esc(e.bank || '') + ' ' + esc(mask(e.iban)) : ''}</td></tr></table>
+    <h4>Attendance, ${kName(run.ym)}</h4>
+    <table class="small att-t"><thead><tr><th class="r">Calendar days</th><th class="r">Present</th><th class="r">Weekly off</th><th class="r">Holidays</th><th class="r">Annual leave</th><th class="r">Sick leave</th><th class="r">Absent</th><th class="r">Unpaid leave</th><th class="r">Not employed</th><th class="r">Paid days</th><th class="r">OT hours</th></tr></thead>
+      <tbody><tr><td class="r">${+l.days || daysIn(run.ym)}</td><td class="r">${a.P||0}</td><td class="r">${a.O||0}</td><td class="r">${a.H||0}</td><td class="r">${a.L||0}</td><td class="r">${a.S||0}</td><td class="r">${a.A||0}</td><td class="r">${a.U||0}</td><td class="r">${+l.notEmployed||0}</td><td class="r"><b>${paidDays}</b></td><td class="r">${+l.otHours||0}</td></tr></tbody></table>
+    <table><thead><tr><th>Earnings</th><th class="r">${esc(s.cur)}</th><th>Deductions</th><th class="r">${esc(s.cur)}</th></tr></thead><tbody>
+      <tr><td>Basic salary</td><td class="r">${fmt(l.basic)}</td><td>Unpaid days: ${unpaid} × ${fmt(dayRate)}</td><td class="r">${fmt(l.unpaidDed)}</td></tr>
+      <tr><td>Housing allowance</td><td class="r">${fmt(l.housing)}</td><td>Salary advance recovered</td><td class="r">${fmt(l.advanceRec)}</td></tr>
+      <tr><td>Transport allowance</td><td class="r">${fmt(l.transport)}</td><td>Other deductions</td><td class="r">${fmt(l.deductions)}</td></tr>
+      <tr><td>Other allowance</td><td class="r">${fmt(l.other)}</td><td></td><td></td></tr>
+      <tr><td>Overtime: ${+l.otHours||0} h × ${fmt(l.otRate)}</td><td class="r">${fmt(l.otPay)}</td><td></td><td></td></tr>
+      <tr><td>Sales commission</td><td class="r">${fmt(l.commission)}</td><td></td><td></td></tr>
+      <tr><td>Additions</td><td class="r">${fmt(l.additions)}</td><td></td><td></td></tr>
+      <tr class="tot"><td>Total earnings</td><td class="r">${fmt(earn)}</td><td>Total deductions</td><td class="r">${fmt(ded)}</td></tr></tbody></table>
+    ${c && (c.lines.length || +l.commission) ? `<h4>Commission</h4><table class="small"><tbody>
+      <tr><td>Service sales (before VAT, after credit notes)</td><td class="r">${fmt(c.svc)}</td><td>${({above:`${c.pct}% on sales above the target of ${fmt(c.target)}`, all:`${c.pct}% on all sales, target ${fmt(c.target)} ${c.svc >= c.target ? 'reached' : 'not reached'}`, flat:`${c.pct}% on all sales`})[c.basis]}</td><td class="r">${fmt(c.commSvc)}</td></tr>
+      <tr><td>Product sales</td><td class="r">${fmt(c.prod)}</td><td>${c.ppct}% on product sales</td><td class="r">${fmt(c.commProd)}</td></tr>
+      ${manual ? `<tr><td colspan="3">Adjusted in payroll</td><td class="r">${fmt(l.commission)}</td></tr>` : ''}</tbody></table>` : ''}
+    <div class="tt"><div class="g"><span>Net pay ${esc(s.cur)}</span><span>${fmt(l.net)}</span></div></div><p class="words">${esc(amountWords(l.net))}</p>
+    <table class="small"><thead><tr><th>Year to date ${run.ym.slice(0,4)}</th><th class="r">Gross pay</th><th class="r">Commission</th><th class="r">Deductions</th><th class="r">Net pay</th><th class="r">Gratuity built up</th></tr></thead><tbody>
+      <tr><td>${ytd.length} month${ytd.length === 1 ? '' : 's'}</td><td class="r">${fmt(ytd.reduce((t,x)=>t+(+x.earned||0)+(+x.deductions||0),0))}</td><td class="r">${fmt(ytd.reduce((t,x)=>t+(+x.commission||0),0))}</td><td class="r">${fmt(ytd.reduce((t,x)=>t+(+x.unpaidDed||0)+(+x.deductions||0)+(+x.advanceRec||0),0))}</td><td class="r">${fmt(ytd.reduce((t,x)=>t+(+x.net||0),0))}</td><td class="r">${fmt(g.amount)}</td></tr></tbody></table>
+    ${l.note ? `<p class="mini">${esc(l.note)}</p>` : ''}
+    <p class="mini">Day rate = monthly ${s.deductBasis === 'basic' ? 'basic' : 'gross'} ÷ ${basis}. Overtime = basic ÷ ${basis} ÷ ${s.hoursDay} hours × ${s.otMult}. Gratuity is an estimate under UAE law.</p>
+    ${sigs(['Prepared by','Approved by','Employee signature'])}</div>`; }).join('');
+}
+
+/* ---------- salary register (whole payroll on one page) ---------- */
+function registerHTML(run){
+  const s = DB.settings, t = runTotals(run);
+  return `<div class="inv wide">${docHead('SALARY REGISTER', `<div><b>${kName(run.ym)}</b></div><div>${run.status}</div>`)}
+    <table class="small reg"><thead><tr><th>Code</th><th>Employee</th><th class="r">Paid days</th><th class="r">Gross</th><th class="r">Unpaid</th><th class="r">OT</th><th class="r">Sales</th><th class="r">Commission</th><th class="r">Additions</th><th class="r">Deductions</th><th class="r">Advance</th><th class="r">Net pay</th><th>Mode</th><th>Signature</th></tr></thead><tbody>
+    ${run.lines.map(l => { const e = emp(l.emp) || {}; return `<tr><td>${esc(e.code)}</td><td>${esc(e.name)}</td><td class="r">${(+l.days||0) - (+l.unpaidDays||0) - (+l.notEmployed||0)}</td><td class="r">${fmt(l.gross)}</td><td class="r">${fmtZ(l.unpaidDed)}</td><td class="r">${fmtZ(l.otPay)}</td><td class="r">${fmtZ(l.sales)}</td><td class="r">${fmtZ(l.commission)}</td><td class="r">${fmtZ(l.additions)}</td><td class="r">${fmtZ(l.deductions)}</td><td class="r">${fmtZ(l.advanceRec)}</td><td class="r"><b>${fmt(l.net)}</b></td><td>${esc(l.payMode)}</td><td style="min-width:90px"></td></tr>`; }).join('')}</tbody>
+    <tfoot><tr><td></td><td>Total (${run.lines.length})</td><td></td><td class="r">${fmt(t.gross)}</td><td class="r">${fmt(t.unpaidDed)}</td><td class="r">${fmt(t.otPay)}</td><td class="r">${fmt(t.sales)}</td><td class="r">${fmt(t.commission)}</td><td class="r">${fmt(t.additions)}</td><td class="r">${fmt(t.deductions)}</td><td class="r">${fmt(t.advanceRec)}</td><td class="r">${fmt(t.net)}</td><td></td><td></td></tr></tfoot></table>
+    <table class="kvt"><tr><td>Bank / WPS</td><td>${esc(s.cur)} ${fmt(t.bank)}</td></tr><tr><td>Cash</td><td>${esc(s.cur)} ${fmt(t.cash)}</td></tr><tr><td>Total net pay</td><td><b>${esc(s.cur)} ${fmt(t.net)}</b></td></tr></table>
+    <p class="words">${esc(amountWords(t.net))}</p>${sigs(['Prepared by','Checked by','Approved by'])}</div>`;
+}
+
+/* ---------- commission statement ---------- */
+function commissionHTML(e, ym){
+  const s = DB.settings, c = commissionCalc(e, ym + '-01', lastDay(ym)), run = runFor(ym), l = run?.lines.find(x => x.emp === e.id);
+  return `<div class="inv">${docHead('COMMISSION STATEMENT', `<div><b>${kName(ym)}</b></div>`)}
+    <table class="kvt two"><tr><td>Employee</td><td><b>${esc(e.name)}</b></td><td>Code</td><td>${esc(e.code)}</td></tr><tr><td>Position</td><td>${esc(e.title)}</td><td>Plan</td><td>${c.pct}% services (${esc(COMM_BASIS[c.basis].toLowerCase())}${c.basis !== 'flat' ? ', target ' + fmt(c.target) : ''}), ${c.ppct}% products</td></tr></table>
+    <table class="small"><thead><tr><th>Date</th><th>Entry</th><th>Customer</th><th>Service / product</th><th>Type</th><th class="r">Net ${esc(s.cur)}</th></tr></thead><tbody>
+    ${c.lines.map(x => `<tr><td>${dShort(x.date)}</td><td>${esc(x.no)}</td><td>${esc(x.who)}</td><td>${esc(x.desc)}</td><td>${x.v.type === 'CN' ? 'Credit note' : x.product ? 'Product' : 'Service'}</td><td class="r">${fmt(x.net)}</td></tr>`).join('') || '<tr><td colspan="6">No tagged sales this month.</td></tr>'}</tbody></table>
+    <table class="small"><tbody><tr><td>Service sales</td><td class="r">${fmt(c.svc)}</td></tr><tr><td>Commissionable (${({above:'above target', all: c.svc >= c.target ? 'target reached' : 'target not reached', flat:'all sales'})[c.basis]})</td><td class="r">${fmt(c.base)}</td></tr>
+      <tr><td>Service commission ${c.pct}%</td><td class="r">${fmt(c.commSvc)}</td></tr><tr><td>Product sales ${fmt(c.prod)} × ${c.ppct}%</td><td class="r">${fmt(c.commProd)}</td></tr>
+      <tr class="tot"><td>Commission earned</td><td class="r">${fmt(c.total)}</td></tr>${l && Math.abs((+l.commission||0) - c.total) > 0.005 ? `<tr><td>Paid in payroll (${run.status})</td><td class="r">${fmt(l.commission)}</td></tr>` : l ? `<tr><td>Included in payroll</td><td class="r">${run.status}</td></tr>` : ''}</tbody></table>
+    <p class="words">${esc(amountWords(l ? l.commission : c.total))}</p>${sigs(['Prepared by','Approved by','Employee signature'])}</div>`;
+}
+function commDlg(e, ym){
+  const c = commissionCalc(e, ym + '-01', lastDay(ym));
+  return `<div class="dlg"><h2>${esc(e.name)}, ${kName(ym)}</h2><p>${c.lines.length} tagged lines · service sales ${money(c.svc)} · product sales ${money(c.prod)} · commission <b>${money(c.total)}</b></p>
+    <div class="tbl-wrap" style="max-height:55vh;overflow:auto"><table><thead><tr><th>Date</th><th>Entry</th><th>Customer</th><th>Item</th><th class="r">Net</th></tr></thead><tbody>
+    ${c.lines.map(x => `<tr data-act="editV" data-id="${x.v.id}"><td>${dShort(x.date)}</td><td>${esc(x.no)}</td><td>${esc(x.who)}</td><td>${esc(x.desc)}${x.product ? ' <span class="mini">product</span>' : ''}</td><td class="r num ${x.net < 0 ? 'out' : ''}">${fmt(x.net)}</td></tr>`).join('') || '<tr><td colspan="5" class="mut">No tagged sales.</td></tr>'}</tbody></table></div>
+    <div class="dlg-foot" style="margin-top:18px"><button type="button" class="btn ghost" data-act="close">Close</button><button type="button" class="btn" data-act="printComm" data-id="${e.id}" data-ym="${ym}">${ic('print',15)}Print statement</button></div></div>`;
+}
+
+/* ---------- final settlement (end of service) ---------- */
+function settleCalc(e, f = {}){
+  const date = e.left || todayISO(), g = gratuity(e, date), daily = (+e.basic || 0) / 30;
+  const leaveDays = num(f.leaveDays ?? e.settle?.leaveDays ?? 0), add = r2(num(f.add ?? e.settle?.add ?? 0)), ded = r2(num(f.ded ?? e.settle?.ded ?? 0));
+  const adv = e.settle?.jv ? +e.settle.adv : advanceBalance(e.id), leavePay = r2(daily * leaveDays);
+  return {date, years:g.years, grat:g.amount, daily:r2(daily), leaveDays, leavePay, add, ded, adv, net:r2(g.amount + leavePay + add - ded - adv), note: f.note ?? e.settle?.note ?? ''};
+}
+function settleDlg(e){
+  const x = settleCalc(e), posted = !!e.settle?.jv, paid = !!e.settle?.pay;
+  return `<form class="dlg" data-form="settle" data-id="${e.id}"><h2>Final settlement, ${esc(e.name)}</h2>
+    <p>Last working day ${dLong(x.date)} · ${x.years.toFixed(2)} years of service · basic ${money(e.basic)}. Pay the last month's salary through payroll as usual.</p>
+    <div class="grid4">${fld('Unused leave days to pay', inp('leaveDays', x.leaveDays, `type="number" step="0.5" min="0" ${posted ? 'disabled' : ''}`))}${fld('Other additions (notice pay, bonus)', inp('add', x.add, `type="number" step="0.01" min="0" ${posted ? 'disabled' : ''}`))}
+      ${fld('Other deductions (damages, visa costs)', inp('ded', x.ded, `type="number" step="0.01" min="0" ${posted ? 'disabled' : ''}`))}${fld('Note', inp('note', x.note, posted ? 'disabled' : ''))}</div>
+    <table class="items" style="margin-top:14px"><tbody>
+      <tr><td>End of service gratuity (21 days' basic a year for the first 5 years, 30 days after)</td><td class="r num">${fmt(x.grat)}</td></tr>
+      <tr><td>Leave pay ${x.leaveDays} days × ${fmt(x.daily)}</td><td class="r num">${fmt(x.leavePay)}</td></tr>
+      <tr><td>Other additions</td><td class="r num">${fmt(x.add)}</td></tr><tr><td>Less salary advances owed</td><td class="r num out">${fmt(-x.adv)}</td></tr><tr><td>Less other deductions</td><td class="r num out">${fmt(-x.ded)}</td></tr>
+      <tr><td><b>Net settlement</b></td><td class="r num"><b>${fmt(x.net)}</b></td></tr></tbody></table>
+    <p class="help">Posting uses the end of service provision first (account 2400), the rest goes to End of service and leave pay (6130). Confirm the final figures with your HR advisor.</p>
+    <div class="dlg-foot" style="margin-top:18px">${posted && !paid ? `<button type="button" class="btn danger" data-act="unsettle" data-id="${e.id}">Cancel settlement</button>` : ''}
+      <button type="button" class="btn ghost" data-act="printSettle" data-id="${e.id}">${ic('print',15)}Print</button><button type="button" class="btn ghost" data-act="close">Close</button>
+      ${!posted ? `<button type="button" class="btn ghost" data-act="settleRecalc" data-id="${e.id}">Recalculate</button><button class="btn" type="submit">Approve and post</button>` : !paid ? `<button type="button" class="btn" data-act="paySettle" data-id="${e.id}">Pay settlement</button>` : `<span class="mini" style="align-self:center">Approved as ${esc(vById(e.settle.jv)?.no || '')}, paid by ${esc(vById(e.settle.pay)?.no || '')}</span>`}</div></form>`;
+}
+function settleHTML(e){
+  const x = e.settle?.jv ? Object.assign(settleCalc(e), e.settle) : settleCalc(e), s = DB.settings;
+  return `<div class="inv">${docHead('FINAL SETTLEMENT', `<div>${e.settle?.jv ? 'Approved' : 'Draft'}</div><div>${dLong(todayISO())}</div>`)}
+    <table class="kvt two"><tr><td>Employee</td><td><b>${esc(e.name)}</b></td><td>Code</td><td>${esc(e.code)}</td></tr><tr><td>Position</td><td>${esc(e.title)}</td><td>Labour card / ID</td><td>${esc(e.labourId || '–')}</td></tr>
+      <tr><td>Joined</td><td>${dLong(e.join)}</td><td>Last working day</td><td>${dLong(x.date)}</td></tr><tr><td>Service</td><td>${(+x.years).toFixed(2)} years</td><td>Basic salary</td><td>${esc(s.cur)} ${fmt(e.basic)}</td></tr></table>
+    <table><thead><tr><th>Item</th><th>Working</th><th class="r">${esc(s.cur)}</th></tr></thead><tbody>
+      <tr><td>End of service gratuity</td><td>Basic ÷ 30 × (21 days × first 5 years + 30 days × years after)</td><td class="r">${fmt(x.grat)}</td></tr>
+      <tr><td>Leave pay</td><td>${x.leaveDays} days × ${fmt(x.daily)}</td><td class="r">${fmt(x.leavePay)}</td></tr>
+      <tr><td>Other additions</td><td></td><td class="r">${fmt(x.add)}</td></tr><tr><td>Salary advances recovered</td><td></td><td class="r">−${fmt(x.adv)}</td></tr><tr><td>Other deductions</td><td>${esc(x.note || '')}</td><td class="r">−${fmt(x.ded)}</td></tr>
+      <tr class="tot"><td>Net final settlement</td><td></td><td class="r">${fmt(x.net)}</td></tr></tbody></table>
+    <p class="words">${esc(amountWords(x.net))}</p>
+    <p class="lead">I, ${esc(e.name)}, confirm that I have received the above amount in full and final settlement of all my dues, salary, leave and end of service benefits from ${esc(s.legal || s.biz)}, and have no further claims.</p>
+    ${sigs(['Prepared by','Approved by','Employee signature'])}</div>`;
+}
+
+/* ---------- salary certificate ---------- */
+function certHTML(e){
+  const s = DB.settings, g = grossOf(e);
+  return `<div class="inv">${docHead('SALARY CERTIFICATE', `<div>${dLong(todayISO())}</div><div>Ref. SC-${esc(e.code||'')}-${todayISO().replace(/-/g,'')}</div>`)}
+    <p class="lead" style="margin-top:22px"><b>To whom it may concern</b></p>
+    <p class="lead">This is to certify that <b>${esc(e.name)}</b>${e.labourId ? ', labour card / ID ' + esc(e.labourId) + ',' : ''} ${e.left && e.left < todayISO() ? `was employed with <b>${esc(s.legal || s.biz)}</b> as <b>${esc(e.title || 'staff')}</b> from ${dLong(e.join)} to ${dLong(e.left)}` : `is employed with <b>${esc(s.legal || s.biz)}</b> as <b>${esc(e.title || 'staff')}</b> since ${dLong(e.join)}`}, and ${e.left && e.left < todayISO() ? 'received' : 'receives'} the following monthly salary:</p>
+    <table style="max-width:460px"><tbody><tr><td>Basic salary</td><td class="r">${fmt(e.basic)}</td></tr><tr><td>Housing allowance</td><td class="r">${fmt(e.housing)}</td></tr><tr><td>Transport allowance</td><td class="r">${fmt(e.transport)}</td></tr><tr><td>Other allowance</td><td class="r">${fmt(e.other)}</td></tr>
+      <tr class="tot"><td>Total monthly salary (${esc(s.cur)})</td><td class="r">${fmt(g)}</td></tr></tbody></table>
+    <p class="words">${esc(amountWords(g))} per month${+e.commPct || +e.prodPct ? ', plus sales commission' : ''}.</p>
+    <p class="lead">This certificate is issued at the employee's request and carries no financial liability on the company.</p>
+    ${sigs(['Authorised signatory','Company stamp'])}</div>`;
+}
+
+/* ---------- depreciation (straight line, monthly) ---------- */
+function depAssets(){ return DB.accounts.filter(a => a.type === 'asset' && !a.role && !['1400','1450','1590'].includes(a.code) && bal(a.code) > 0.005); }
+function depDlg(){
+  const ym = prevKey(curKey()), done = DB.vouchers.find(v => v.ref === 'DEP-' + ym);
+  return `<form class="dlg" data-form="dep"><h2>Monthly depreciation</h2><p>Spreads the cost of equipment and furniture over its useful life. Posts Dr Depreciation (6960), Cr Accumulated depreciation (1590).</p>
+    <div class="grid3">${fld('Month', `<input type="month" name="ym" value="${ym}" required>`)}${fld('Useful life (years)', inp('years', DB.settings.depYears || 5, 'type="number" min="1" step="1"'))}</div>
+    <table class="items" style="margin-top:12px"><thead><tr><th>Asset account</th><th class="r">Cost</th><th class="r">Per month</th></tr></thead><tbody>
+    ${depAssets().map(a => `<tr><td>${esc(a.code + ' · ' + a.name)}</td><td class="r num">${fmt(bal(a.code))}</td><td class="r num">${fmt(bal(a.code) / ((+DB.settings.depYears || 5) * 12))}</td></tr>`).join('') || '<tr><td colspan="3" class="mut">No equipment or furniture on the books yet.</td></tr>'}</tbody></table>
+    <p class="help">Accumulated depreciation so far: ${money(-bal('1590'))}.${done ? ` ${kName(ym)} is already posted as ${esc(done.no)}.` : ''}</p>
+    <div class="dlg-foot" style="margin-top:18px"><button type="button" class="btn ghost" data-act="close">Cancel</button><button class="btn" type="submit">Post depreciation</button></div></form>`;
+}
+
+/* ---------- actions ---------- */
+Object.assign(ACT, {
+  commStmt: d => { const e = emp(d.id); if(e) openDlg(commDlg(e, d.ym), 'wide'); },
+  printComm: d => { const e = emp(d.id); if(e) printHTML(commissionHTML(e, d.ym)); },
+  printRegister: () => { const r = runFor(state.payKey); if(r) printHTML(registerHTML(r)); },
+  salaryCert: d => { const e = emp(d.id); if(e) printHTML(certHTML(e)); },
+  settle: d => { const e = emp(d.id); if(!e) return; if(!e.left) return toast('Enter the "Left on" date and save first.'); openDlg(settleDlg(e), 'wide'); },
+  settleRecalc: d => { const e = emp(d.id), f = $('form[data-form=settle]'); e._draft = Object.fromEntries(new FormData(f).entries()); e.settle = Object.assign({}, e.settle, {leaveDays:num(e._draft.leaveDays), add:num(e._draft.add), ded:num(e._draft.ded), note:e._draft.note}); delete e._draft; openDlg(settleDlg(e), 'wide'); },
+  printSettle: d => { const e = emp(d.id); if(e) printHTML(settleHTML(e)); },
+  unsettle: d => { const e = emp(d.id); if(!e?.settle?.jv || e.settle.pay) return; if(lockedDate(e.settle.date)) return toast('That date is locked.'); if(!confirmBox('Cancel this final settlement? Its journal entry is removed.')) return;
+    const v = vById(e.settle.jv); DB.vouchers = DB.vouchers.filter(x => x.id !== e.settle.jv); if(v) audit('Deleted', v, 'Final settlement cancelled'); delete e.settle.jv; delete e.settle.adv; closeDlg(); commit('Settlement cancelled'); },
+  paySettle: d => { const e = emp(d.id); if(!e?.settle?.jv) return; closeDlg();
+    const v = newVoucher('TRF', {from: DB.settings.wpsAcc || '1100', to:'2300', amount:e.settle.net, memo:`Final settlement ${e.name}`}); v.ref = 'SETTLE-' + (e.code || e.id); v._settle = e.id; openVoucher(v); },
+  depreciation: () => openDlg(depDlg(), 'mid')
+});
+// remember the payment voucher of a settlement once it is saved
+const _saveVoucher0 = saveVoucher;
+saveVoucher = function(){ const sid = F?._settle, before = new Set(DB.vouchers.map(v => v.id)); const ok = _saveVoucher0();
+  if(ok && sid){ const nv = DB.vouchers.find(v => !before.has(v.id) && v.ref === 'SETTLE-' + (emp(sid)?.code || sid)); const e = emp(sid); if(nv && e?.settle){ e.settle.pay = nv.id; commit(); } }
+  return ok; };
+
+document.addEventListener('submit', ev => {
+  const f = ev.target, kind = f.dataset.form; if(kind !== 'settle' && kind !== 'dep') return; ev.preventDefault(); if(!guardWrite()) return;
+  const now = new Date().toISOString();
+  if(kind === 'settle'){
+    const e = emp(f.dataset.id), x = settleCalc(e, Object.fromEntries(new FormData(f).entries()));
+    if(lockedDate(x.date)) return toast('That date is in a locked period.');
+    if(!confirmBox(`Approve the final settlement of ${money(x.net)} for ${e.name}? It is posted to the accounts.`)) return;
+    const prov = Math.max(0, Math.min(x.grat, bal('2400', x.date))), m = `Final settlement ${e.name}`;
+    const items = [prov ? {acc:'2400', desc:m + ' – gratuity from provision', dr:r2(prov), cr:0} : null, x.grat - prov + x.leavePay > 0.005 ? {acc:'6130', desc:m + ' – gratuity and leave pay', dr:r2(x.grat - prov + x.leavePay), cr:0} : null,
+      x.add ? {acc:'6100', desc:m + ' – other additions', dr:x.add, cr:0} : null, x.adv ? {acc:'1450', desc:m + ' – advances recovered', dr:0, cr:x.adv} : null, x.ded ? {acc:'4900', desc:m + ' – deductions', dr:0, cr:x.ded} : null,
+      x.net > 0 ? {acc:'2300', desc:m + ' – net payable', dr:0, cr:x.net} : x.net < 0 ? {acc:'1450', desc:m + ' – owed by employee', dr:-x.net, cr:0} : null].filter(Boolean);
+    const v = {id:uid('v'), no:nextNo('JV'), type:'JV', date:x.date, due:'', party:'', pname:e.name, ref:'SETTLE-' + (e.code || e.id), memo:m, payAcc:'', toAcc:'', amount:0, incl:false, items, alloc:[], created:now, updated:now};
+    DB.vouchers.push(v); e.settle = Object.assign({}, x, {jv:v.id}); audit('Added', v, m + ' ' + money(x.net)); closeDlg(); commit(`Final settlement posted as ${v.no}`); openDlg(settleDlg(e), 'wide');
+  }
+  if(kind === 'dep'){
+    const ym = f.elements.ym.value, years = Math.max(1, num(f.elements.years.value)), date = lastDay(ym);
+    if(DB.vouchers.some(v => v.ref === 'DEP-' + ym)) return toast(`Depreciation for ${kName(ym)} is already posted.`);
+    if(lockedDate(date)) return toast('That month is locked.');
+    const m = `Depreciation ${kName(ym)}`, rows = depAssets().map(a => ({a, amt:r2(bal(a.code, date) / (years * 12))})).filter(x => x.amt > 0);
+    const cost = rows.reduce((t,x) => t + bal(x.a.code, date), 0), left = r2(cost + bal('1590', date)); let total = r2(rows.reduce((t,x)=>t+x.amt,0)); total = Math.min(total, Math.max(0, left));
+    if(!(total > 0)) return toast('Nothing left to depreciate.');
+    const v = {id:uid('v'), no:nextNo('JV'), type:'JV', date, due:'', party:'', pname:'', ref:'DEP-' + ym, memo:m, payAcc:'', toAcc:'', amount:0, incl:false,
+      items:[{acc:'6960', desc:m + ' (' + rows.map(x => x.a.name).join(', ') + ', ' + years + ' years)', dr:total, cr:0}, {acc:'1590', desc:m, dr:0, cr:total}], alloc:[], created:now, updated:now};
+    DB.settings.depYears = years; DB.vouchers.push(v); audit('Added', v); closeDlg(); commit(`${m} of ${money(total)} posted as ${v.no}`);
+  }
+});
+
+/* =====================================================================
    sqlite.js — the SQLite database file (McQueen_Books.db)
    The app keeps its working copy in memory and writes the whole .db file
    on every save. Tables follow McQueen_Local_Database_Plan.xlsx.
    ===================================================================== */
 let SQL = null;
 const sqlReady = initSqlJs({wasmBinary: Uint8Array.from(atob(SQL_WASM_B64), c => c.charCodeAt(0))}).then(s => (SQL = s));
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const SCHEMA = `
 PRAGMA user_version = ${SCHEMA_VERSION};
 CREATE TABLE app_info (key TEXT PRIMARY KEY, value TEXT);
@@ -3206,7 +3576,8 @@ CREATE TABLE allocations (voucher_id TEXT NOT NULL REFERENCES vouchers(id) ON DE
 CREATE TABLE bank_statement (id TEXT PRIMARY KEY, account TEXT REFERENCES accounts(code), date TEXT NOT NULL, description TEXT, amount REAL NOT NULL, balance REAL, seq INTEGER, matched_voucher_id TEXT REFERENCES vouchers(id));
 CREATE TABLE reconciliations (id TEXT PRIMARY KEY, account TEXT REFERENCES accounts(code), date TEXT NOT NULL, book_balance REAL, actual_balance REAL, difference REAL, note TEXT, user TEXT, saved_at TEXT);
 CREATE TABLE employees (id TEXT PRIMARY KEY, code TEXT, name TEXT NOT NULL, position TEXT, department TEXT, phone TEXT, joined TEXT, left_on TEXT, basic REAL, housing REAL, transport REAL, other REAL,
-  pay_mode TEXT, bank TEXT, iban TEXT, labour_id TEXT, notes TEXT, commission_pct REAL, commission_target REAL);
+  pay_mode TEXT, bank TEXT, iban TEXT, labour_id TEXT, notes TEXT, commission_pct REAL, commission_target REAL,
+  commission_basis TEXT, product_commission_pct REAL, final_settlement TEXT);
 CREATE TABLE attendance (employee_id TEXT NOT NULL REFERENCES employees(id), month TEXT NOT NULL, days TEXT, ot_hours REAL, PRIMARY KEY (employee_id, month));
 CREATE TABLE payroll_runs (id TEXT PRIMARY KEY, month TEXT NOT NULL UNIQUE, status TEXT NOT NULL, journal_id TEXT REFERENCES vouchers(id), payment_ids TEXT, created TEXT, created_by TEXT);
 CREATE TABLE payroll_lines (run_id TEXT NOT NULL REFERENCES payroll_runs(id) ON DELETE CASCADE, employee_id TEXT NOT NULL REFERENCES employees(id), basic REAL, housing REAL, transport REAL, other REAL,
@@ -3238,8 +3609,8 @@ function dbToSqliteBytes(){
     ins('app_info', ['key','value'], [['app','McQueen Books'], ['app_version', APP_VER], ['schema_version', String(SCHEMA_VERSION)], ['saved_at', new Date().toISOString()], ['saved_by', userName()]]);
     ins('settings', ['key','value'], Object.entries(DB.settings).map(([k,v]) => [k, v == null ? '' : String(v)]));
     ins('accounts', ['code','name','type','role','active'], DB.accounts.map(a => [a.code, a.name, a.type, a.role || '', a.active === false ? 0 : 1]));
-    ins('employees', ['id','code','name','position','department','phone','joined','left_on','basic','housing','transport','other','pay_mode','bank','iban','labour_id','notes','commission_pct','commission_target'],
-      DB.employees.map(e => [e.id, e.code||'', e.name, e.title||'', e.dept||'', e.phone||'', nz(e.join), nz(e.left), +e.basic||0, +e.housing||0, +e.transport||0, +e.other||0, e.payMode||'Bank', e.bank||'', e.iban||'', e.labourId||'', e.notes||'', +e.commPct||0, +e.target||0]));
+    ins('employees', ['id','code','name','position','department','phone','joined','left_on','basic','housing','transport','other','pay_mode','bank','iban','labour_id','notes','commission_pct','commission_target','commission_basis','product_commission_pct','final_settlement'],
+      DB.employees.map(e => [e.id, e.code||'', e.name, e.title||'', e.dept||'', e.phone||'', nz(e.join), nz(e.left), +e.basic||0, +e.housing||0, +e.transport||0, +e.other||0, e.payMode||'Bank', e.bank||'', e.iban||'', e.labourId||'', e.notes||'', +e.commPct||0, +e.target||0, e.commBasis||'above', +e.prodPct||0, e.settle ? JSON.stringify(e.settle) : null]));
     ins('contacts', ['id','kind','name','phone','email','trn','address','terms_days','default_account'], DB.contacts.map(c => [c.id, c.kind, c.name, c.phone||'', c.email||'', c.trn||'', c.address||'', +c.terms||0, nz(c.cat)]));
     ins('vouchers', ['id','no','type','date','due','contact_id','payee','ref','memo','pay_account','to_account','amount','vat_inclusive','first_in_day','created','updated'],
       sortedVouchers().map(v => [v.id, v.no, v.type, v.date, nz(v.due), nz(v.party), v.pname||'', v.ref||'', v.memo||'', nz(v.payAcc), nz(v.toAcc), +v.amount||0, v.incl ? 1 : 0, v.first ? 1 : 0, v.created||'', v.updated||'']));
@@ -3290,7 +3661,8 @@ function sqliteToDB(bytes){
     out.statement = all('SELECT * FROM bank_statement').map(r => ({id:s(r.id), acc:s(r.account), date:s(r.date), desc:s(r.description), amount:r2(n(r.amount)), bal: r.balance == null ? null : r2(+r.balance), seq:n(r.seq), match:s(r.matched_voucher_id)}));
     out.recons = all('SELECT * FROM reconciliations').map(r => ({id:s(r.id), acc:s(r.account), date:s(r.date), book:n(r.book_balance), actual:n(r.actual_balance), diff:n(r.difference), note:s(r.note), user:s(r.user), t:s(r.saved_at)}));
     out.employees = all('SELECT * FROM employees').map(r => ({id:s(r.id), code:s(r.code), name:s(r.name), title:s(r.position), dept:s(r.department), phone:s(r.phone), join:s(r.joined), left:s(r.left_on),
-      basic:n(r.basic), housing:n(r.housing), transport:n(r.transport), other:n(r.other), payMode:s(r.pay_mode)||'Bank', bank:s(r.bank), iban:s(r.iban), labourId:s(r.labour_id), notes:s(r.notes), commPct:n(r.commission_pct), target:n(r.commission_target)}));
+      basic:n(r.basic), housing:n(r.housing), transport:n(r.transport), other:n(r.other), payMode:s(r.pay_mode)||'Bank', bank:s(r.bank), iban:s(r.iban), labourId:s(r.labour_id), notes:s(r.notes), commPct:n(r.commission_pct), target:n(r.commission_target), commBasis:s(r.commission_basis) || 'above', prodPct:n(r.product_commission_pct),
+      ...(r.final_settlement ? {settle: (() => { try{ return JSON.parse(r.final_settlement); }catch(e){ return undefined; } })()} : {})}));
     for(const r of all('SELECT * FROM attendance')) (out.attendance[r.employee_id] ||= {})[r.month] = {days:s(r.days), ot:n(r.ot_hours)};
     const runs = {};
     out.payruns = all('SELECT * FROM payroll_runs ORDER BY month').map(r => (runs[r.id] = {id:s(r.id), ym:s(r.month), status:s(r.status), jv:s(r.journal_id), pays:s(r.payment_ids).split(',').filter(Boolean), created:s(r.created), by:s(r.created_by), lines:[]}));
