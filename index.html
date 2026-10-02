@@ -9,10 +9,10 @@
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
 <style>
 :root{
-  --canvas:#F4EEF1; --surface:#FFFFFF; --ink:#2A1F2B; --muted:#7B6A7B; --line:#E7DCE2; --line-2:#F1E9ED;
-  --plum:#5A2350; --plum-deep:#3F1838; --plum-soft:#F3E6EF;
+  --canvas:#F5F2EC; --surface:#FFFFFF; --ink:#1A1816; --muted:#6F685E; --line:#E5DED2; --line-2:#EFEAE1;
+  --plum:#1C1A17; --plum-deep:#0D0D0C; --plum-soft:#F1EADB;
   --jade:#1E7A61; --jade-soft:#E3F2EC; --rose:#B3445A; --rose-soft:#F9E5E9;
-  --gold:#C9A563; --gold-soft:#F6EEDC; --ivory:#FBF6EE;
+  --gold:#C2A468; --gold-soft:#F4EDDE; --ivory:#FBF6EE;
   --serif:"Instrument Serif", Georgia, "Times New Roman", serif;
   --sans:"Figtree", "Segoe UI", system-ui, -apple-system, sans-serif;
   --r-lg:22px; --r-md:14px; --r-sm:10px;
@@ -26,17 +26,17 @@ button,input,select,textarea{font:inherit;color:inherit}
 
 /* ---------- shell ---------- */
 .app{display:grid;grid-template-columns:248px 1fr;min-height:100vh}
-.side{background:var(--plum-deep);color:#EBDDE7;padding:28px 18px;display:flex;flex-direction:column;gap:28px;position:sticky;top:0;height:100vh}
+.side{background:var(--plum-deep);color:#E9E4DA;padding:28px 18px;display:flex;flex-direction:column;gap:28px;position:sticky;top:0;height:100vh}
 .brand{display:flex;gap:12px;align-items:center;padding:0 8px}
 .mono{width:44px;height:44px;border-radius:50%;border:1.5px solid var(--gold);display:grid;place-items:center;font:28px/1 var(--serif);color:var(--gold);flex:none}
 .brand b{display:block;font:22px/1.1 var(--serif);font-weight:400;color:#fff}
-.brand small{color:#B9A2B4;font-size:12.5px}
+.brand small{color:#A79E8C;font-size:12.5px}
 .nav{display:flex;flex-direction:column;gap:4px}
-.nav button{all:unset;cursor:pointer;display:flex;gap:12px;align-items:center;padding:11px 12px;border-radius:12px;color:#D9C6D4;font-weight:500}
+.nav button{all:unset;cursor:pointer;display:flex;gap:12px;align-items:center;padding:11px 12px;border-radius:12px;color:#CFC8BB;font-weight:500}
 .nav button svg{width:19px;height:19px;flex:none;opacity:.85}
 .nav button:hover{background:rgba(255,255,255,.06);color:#fff}
 .nav button[aria-current="page"]{background:var(--plum);color:#fff;box-shadow:inset 3px 0 0 var(--gold)}
-.side-foot{margin-top:auto;font-size:12.5px;color:#A88FA2;padding:0 8px}
+.side-foot{margin-top:auto;font-size:12.5px;color:#9A917F;padding:0 8px}
 .side-foot button{all:unset;cursor:pointer;color:var(--gold);text-decoration:underline;text-underline-offset:3px}
 
 main{padding:30px 40px 60px;min-width:0}
@@ -55,11 +55,11 @@ main{padding:30px 40px 60px;min-width:0}
 
 /* ---------- hero (the one loud thing) ---------- */
 .hero{background:var(--plum);color:var(--ivory);border-radius:var(--r-lg);padding:30px 34px;display:grid;grid-template-columns:1.1fr 1fr;gap:34px;position:relative;overflow:hidden}
-.hero::after{content:"";position:absolute;inset:10px;border:1px solid rgba(201,165,99,.45);border-radius:16px;pointer-events:none}
-.hero-label{margin:0;color:#E2CBDC;font-size:15px}
+.hero::after{content:"";position:absolute;inset:10px;border:1px solid rgba(194,164,104,.45);border-radius:16px;pointer-events:none}
+.hero-label{margin:0;color:#DDD3BF;font-size:15px}
 .hero-fig{font:400 84px/1 var(--serif);letter-spacing:-.02em;margin:10px 0 12px;color:#fff}
 .hero-fig small{font:500 20px var(--sans);color:var(--gold);margin-right:10px;vertical-align:14px;letter-spacing:.02em}
-.hero-sub{margin:0 0 22px;color:#E2CBDC;max-width:42ch}
+.hero-sub{margin:0 0 22px;color:#DDD3BF;max-width:42ch}
 .hero-actions{display:flex;gap:10px;flex-wrap:wrap;position:relative;z-index:1}
 .hero .btn{background:var(--gold);color:var(--plum-deep);border-color:var(--gold)}
 .hero .btn:hover{background:#D8B677}
@@ -67,13 +67,13 @@ main{padding:30px 40px 60px;min-width:0}
 .hero .btn.ghost:hover{background:rgba(255,255,255,.08)}
 .ledger{align-self:stretch;display:flex;flex-direction:column;position:relative;z-index:1}
 .ledger h3{margin:0 0 4px;font:400 22px var(--serif);color:#fff}
-.ledger p{margin:0 0 14px;color:#D6BCD0;font-size:13.5px}
-.bars{flex:1;display:flex;align-items:flex-end;gap:6px;min-height:150px;border-bottom:1px solid rgba(201,165,99,.5)}
+.ledger p{margin:0 0 14px;color:#D8CCB4;font-size:13.5px}
+.bars{flex:1;display:flex;align-items:flex-end;gap:6px;min-height:150px;border-bottom:1px solid rgba(194,164,104,.5)}
 .bars div{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;gap:6px}
 .bars span{width:100%;max-width:28px;background:var(--gold);border-radius:6px 6px 2px 2px;min-height:2px}
 .bars span.dep{background:transparent;border:1.5px dashed #F0D9A8}
-.bars em{font-style:normal;font-size:11px;color:#CDB3C7}
-.bars-x{display:flex;gap:6px;margin-top:6px}.bars-x em{flex:1;text-align:center;font-style:normal;font-size:11px;color:#CDB3C7}
+.bars em{font-style:normal;font-size:11px;color:#CFC2A6}
+.bars-x{display:flex;gap:6px;margin-top:6px}.bars-x em{flex:1;text-align:center;font-style:normal;font-size:11px;color:#CFC2A6}
 
 /* ---------- surfaces ---------- */
 .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:18px 0}
@@ -113,7 +113,7 @@ main{padding:30px 40px 60px;min-width:0}
 .btn svg{width:16px;height:16px}
 .field{display:flex;flex-direction:column;gap:5px;min-width:0}
 .field label{font-size:12.5px;color:var(--muted);font-weight:500}
-.field input,.field select,.field textarea{width:100%;border:1px solid var(--line);background:#FDFBFC;border-radius:var(--r-sm);padding:10px 12px;outline:none}
+.field input,.field select,.field textarea{width:100%;border:1px solid var(--line);background:#FDFCFA;border-radius:var(--r-sm);padding:10px 12px;outline:none}
 .field input:focus,.field select:focus,.field textarea:focus{border-color:var(--plum);background:#fff;box-shadow:0 0 0 3px var(--plum-soft)}
 .entry{display:grid;gap:10px;align-items:end;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);padding:16px 18px;margin-bottom:18px}
 .entry.cash{grid-template-columns:150px 140px 140px 1fr auto}
@@ -126,7 +126,7 @@ th{text-align:left;font-weight:600;color:var(--muted);font-size:12.5px;padding:0
 td{padding:11px 10px;border-bottom:1px solid var(--line-2);vertical-align:top}
 th.r,td.r{text-align:right}
 tbody tr{cursor:pointer}
-tbody tr:hover td{background:#FBF7F9}
+tbody tr:hover td{background:#FAF8F3}
 tr.open td{color:var(--muted);font-style:italic;cursor:default;background:transparent!important}
 tfoot td{font-weight:700;border-bottom:0;border-top:1.5px solid var(--ink);padding-top:12px}
 .in{color:var(--jade)} .out{color:var(--rose)} .mut{color:var(--muted)}
@@ -135,7 +135,7 @@ tfoot td{font-weight:700;border-bottom:0;border-top:1.5px solid var(--ink);paddi
 .chips{display:flex;gap:6px;flex-wrap:wrap}
 .chips button{all:unset;cursor:pointer;font-size:13px;padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface)}
 .chips button[aria-pressed="true"]{background:var(--plum);border-color:var(--plum);color:#fff}
-.search{border:1px solid var(--line);border-radius:999px;padding:8px 14px;background:#FDFBFC;min-width:200px;outline:none}
+.search{border:1px solid var(--line);border-radius:999px;padding:8px 14px;background:#FDFCFA;min-width:200px;outline:none}
 .search:focus{border-color:var(--plum)}
 .empty{text-align:center;padding:38px 10px;color:var(--muted)}
 .empty b{display:block;font:400 22px var(--serif);color:var(--ink);margin-bottom:4px}
@@ -165,8 +165,8 @@ tfoot td{font-weight:700;border-bottom:0;border-top:1.5px solid var(--ink);paddi
 .help code{background:var(--canvas);padding:1px 6px;border-radius:5px}
 
 /* dialog */
-dialog{border:0;border-radius:18px;padding:0;width:min(480px,calc(100vw - 32px));box-shadow:0 30px 80px rgba(42,31,43,.28);color:var(--ink)}
-dialog::backdrop{background:rgba(42,20,38,.45)}
+dialog{border:0;border-radius:18px;padding:0;width:min(480px,calc(100vw - 32px));box-shadow:0 30px 80px rgba(26,24,22,.28);color:var(--ink)}
+dialog::backdrop{background:rgba(12,11,10,.45)}
 .dlg{padding:26px}
 .dlg h2{font:400 28px/1.1 var(--serif);margin:0 0 4px}
 .dlg>p{color:var(--muted);margin:0 0 18px}
@@ -179,7 +179,7 @@ dialog::backdrop{background:rgba(42,20,38,.45)}
 .toast.show{opacity:1;transform:translate(-50%,0)}
 
 /* welcome overlay */
-.welcome{position:fixed;inset:0;background:rgba(42,20,38,.55);display:grid;place-items:center;z-index:40;padding:16px}
+.welcome{position:fixed;inset:0;background:rgba(12,11,10,.55);display:grid;place-items:center;z-index:40;padding:16px}
 .welcome .card{background:var(--surface);border-radius:22px;max-width:520px;padding:34px;position:relative}
 .welcome h2{font:400 34px/1.1 var(--serif);margin:0 0 10px}
 .welcome ol{padding-left:20px;color:var(--muted);margin:14px 0 22px}
@@ -228,7 +228,7 @@ dialog::backdrop{background:rgba(42,20,38,.45)}
 .seg button[aria-pressed="true"]{background:var(--plum);color:#fff}
 .accs{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px;margin-bottom:18px}
 .acc{all:unset;box-sizing:border-box;cursor:pointer;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);padding:16px 18px;display:flex;flex-direction:column;gap:2px;min-width:0}
-.acc:hover{border-color:#D5C1CD}
+.acc:hover{border-color:#D6CDBB}
 .acc[aria-pressed="true"]{border-color:var(--plum);box-shadow:inset 0 0 0 1px var(--plum)}
 .acc .k{font-size:12.5px;color:var(--muted)}
 .acc b{font:600 21px/1.3 var(--sans);font-variant-numeric:tabular-nums}
@@ -263,7 +263,7 @@ dialog{width:min(540px,calc(100vw - 32px))}
 /* ---------- v3 additions ---------- */
 .side{overflow-y:auto;gap:22px}
 .nav{gap:2px}
-.nav .grp{font-size:11.5px;color:#A88FA2;padding:12px 12px 4px;font-weight:600;letter-spacing:.02em}
+.nav .grp{font-size:11.5px;color:#9A917F;padding:12px 12px 4px;font-weight:600;letter-spacing:.02em}
 .nav button{padding:9px 12px}
 .badge-n{margin-left:auto;background:var(--gold);color:var(--plum-deep);font-size:11px;font-weight:700;border-radius:99px;padding:1px 7px}
 dialog.wide{width:min(940px,calc(100vw - 32px))}
@@ -274,7 +274,7 @@ dialog.mid{width:min(680px,calc(100vw - 32px))}
 .items{width:100%;border-collapse:collapse;margin:6px 0 4px}
 .items th{font-size:12px;padding:0 6px 6px;text-align:left}
 .items td{padding:4px 4px;border-bottom:0;vertical-align:middle}
-.items td input,.items td select{width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 9px;background:#FDFBFC;font-size:14px;min-width:0}
+.items td input,.items td select{width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 9px;background:#FDFCFA;font-size:14px;min-width:0}
 .items td input:focus,.items td select:focus{outline:none;border-color:var(--plum);box-shadow:0 0 0 3px var(--plum-soft)}
 .items td.r input{text-align:right}
 .items .x{all:unset;cursor:pointer;color:var(--muted);width:28px;height:28px;display:grid;place-items:center;border-radius:6px}
@@ -315,7 +315,7 @@ details.post td,details.post th{padding:5px 8px}
 .banner{background:var(--rose-soft);color:#7E2335;border:1px solid #EBC3CC;border-radius:var(--r-md);padding:12px 16px;margin-bottom:16px;display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}
 .newmenu{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
 .newmenu button{all:unset;cursor:pointer;border:1px solid var(--line);border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:2px}
-.newmenu button:hover{border-color:var(--plum);background:#FDF9FB}
+.newmenu button:hover{border-color:var(--plum);background:#FCFAF5}
 .newmenu b{font-weight:600}
 .newmenu span{font-size:13px;color:var(--muted)}
 .acc-type td{font-weight:700;background:var(--canvas)!important;color:var(--plum);cursor:default}
@@ -329,12 +329,12 @@ details.post td,details.post th{padding:5px 8px}
   .side,.top-right,.no-print,.tabs,.period,.chips,.search{display:none!important}
 }
 .inv{font:14px/1.45 var(--sans);color:#222;max-width:800px;margin:0 auto;padding:10px}
-.inv .ih{display:flex;justify-content:space-between;gap:20px;border-bottom:3px solid #5A2350;padding-bottom:14px;margin-bottom:18px}
-.inv .ih h1{font:400 30px var(--serif);margin:0;color:#5A2350}
+.inv .ih{display:flex;justify-content:space-between;gap:20px;border-bottom:3px solid #1C1A17;padding-bottom:14px;margin-bottom:18px}
+.inv .ih h1{font:400 30px var(--serif);margin:0;color:#1C1A17}
 .inv .ih .t{text-align:right}
-.inv .ih .t h2{margin:0;font:600 22px var(--sans);letter-spacing:.04em;color:#5A2350}
+.inv .ih .t h2{margin:0;font:600 22px var(--sans);letter-spacing:.04em;color:#1C1A17}
 .inv table{width:100%;border-collapse:collapse;margin:14px 0}
-.inv th{background:#5A2350;color:#fff;text-align:left;padding:8px;font-size:12.5px}
+.inv th{background:#1C1A17;color:#fff;text-align:left;padding:8px;font-size:12.5px}
 .inv td{padding:8px;border-bottom:1px solid #ddd}
 .inv .r{text-align:right}
 .inv .tt{margin-left:auto;width:300px}
@@ -367,12 +367,23 @@ td:first-child{white-space:nowrap}
 .att{all:unset;box-sizing:border-box;cursor:pointer;display:inline-grid;place-items:center;width:24px;height:24px;border-radius:6px;font-size:11.5px;font-weight:700}
 .att:disabled{cursor:default}
 .att-P{background:var(--jade-soft);color:var(--jade)} .att-A{background:var(--rose);color:#fff} .att-U{background:var(--rose-soft);color:var(--rose)}
-.att-L{background:var(--plum-soft);color:var(--plum)} .att-S{background:var(--gold-soft);color:#7A5A1E} .att-O{background:#EEE9EC;color:var(--muted)} .att-H{background:#E3ECF6;color:#2C5A8A}
+.att-L{background:var(--plum-soft);color:var(--plum)} .att-S{background:var(--gold-soft);color:#7A5A1E} .att-O{background:#ECE8E1;color:var(--muted)} .att-H{background:#E3ECF6;color:#2C5A8A}
 .chips .att{width:20px;height:20px;margin-right:2px}
 .payt td{vertical-align:middle}
 
 .entry.cash{grid-template-columns:150px 130px 130px 1fr 170px auto}
 .entry.cash:not(:has(#cStaff)){grid-template-columns:150px 140px 140px 1fr auto}
+
+/* ---------- McQueen brand: black and gold ---------- */
+.side{background:#0D0D0C;border-right:1px solid #1F1D1A}
+.nav button[aria-current="page"]{background:rgba(194,164,104,.14);color:#E3CF9C;box-shadow:inset 3px 0 0 var(--gold)}
+.nav button[aria-current="page"] svg{opacity:1}
+.nav .grp{color:#8C8474}
+.hero{border:1px solid rgba(194,164,104,.35)}
+.tabs button[aria-selected="true"]{color:#141311;border-bottom-color:var(--gold)}
+.badge-n{background:var(--gold);color:#0D0D0C}
+a,.link{color:#8A6F37}
+.rep .rrow a,.rep td a{color:#8A6F37}
 </style>
 </head>
 <body>
@@ -1158,7 +1169,7 @@ function v1FromWB(wb){
 /* =====================================================================
    excel.js — formatted workbooks written to the data folder
    ===================================================================== */
-const XC = {plum:'5A2350', plumSoft:'F3E6EF', gold:'C9A563', goldSoft:'F6EEDC', ink:'2A1F2B', line:'D9C9D3', white:'FFFFFF', jade:'1E7A61', rose:'B3445A'};
+const XC = {plum:'1C1A17', plumSoft:'F1EADB', gold:'B8995A', goldSoft:'F4EDDE', ink:'1A1816', line:'D9D1C2', white:'FFFFFF', jade:'1E7A61', rose:'B3445A'};
 const thin = {style:'thin', color:{rgb:XC.line}};
 const ST = {
   title: {font:{bold:true, sz:15, color:{rgb:XC.plum}}},
@@ -1504,7 +1515,7 @@ function maybeWelcome(){
   const w = document.createElement('div'); w.className = 'welcome'; w.id = 'welcome';
   w.innerHTML = `<div class="card" role="dialog" aria-modal="true" aria-labelledby="wT"><div class="mono" style="margin-bottom:16px">M</div>
     <h2 id="wT">Keep the books on the D drive</h2>
-    <p class="help" style="margin:0">Your cash book and petty cash entries are already loaded as double-entry accounts. Choose a folder and the app keeps an Excel database and readable books there.</p>
+    <p class="help" style="margin:0">${SEED_V1 ? 'Your cash book and petty cash entries are already loaded as double-entry accounts. ' : ''}Choose a folder and the app keeps the database and readable Excel books there.</p>
     <ol><li>Create a folder such as <b>D:\\McQueen Accounts</b> (the same folder as before is fine).</li><li>Click Choose folder and select it.</li><li>Allow the browser to view and save files there.</li></ol>
     <div class="row-btns"><button class="btn" data-act="chooseFolder">${ic('folder',16)}Choose folder</button><button class="btn ghost" data-act="welcomeLater">Later</button></div></div>`;
   document.body.appendChild(w);
@@ -1847,7 +1858,7 @@ function yearChart(y, series){
   const step = mx > 40000 ? 20000 : mx > 20000 ? 10000 : mx > 8000 ? 5000 : 2000, top = Math.ceil(mx/step)*step;
   const sx = (W-L)/12, n = series.length, bw = Math.min(14, sx/(n+1.4)), yy = v => T + (H-B-T) * (1 - v/top);
   let g = '';
-  for(let v=0; v<=top; v+=step) g += `<line x1="${L}" x2="${W}" y1="${yy(v)}" y2="${yy(v)}" stroke="#EFE6EB"/><text x="${L-8}" y="${yy(v)+4}" text-anchor="end">${v>=1000?(v/1000)+'k':v}</text>`;
+  for(let v=0; v<=top; v+=step) g += `<line x1="${L}" x2="${W}" y1="${yy(v)}" y2="${yy(v)}" stroke="#EDE7DC"/><text x="${L-8}" y="${yy(v)+4}" text-anchor="end">${v>=1000?(v/1000)+'k':v}</text>`;
   data.forEach((vals,i) => { const cx = L + sx*i + sx/2, cur = mkey(y,i+1) === state.key;
     vals.forEach((v,j) => { const x = cx - (n*bw + (n-1)*3)/2 + j*(bw+3); g += `<rect x="${x}" y="${yy(v)}" width="${bw}" height="${H-B-yy(v)}" rx="3" fill="${series[j].c}"><title>${MONTHS[i]}: ${series[j].l} ${money(v)}</title></rect>`; });
     g += `<text x="${cx}" y="${H-6}" text-anchor="middle" style="${cur?'fill:var(--ink);font-weight:700':''}">${MON[i]}</text>`; });
@@ -2989,7 +3000,7 @@ function payrollYearWB(y){
 const SMP = 'smp_';
 const isSmp = x => String(x?.id || x || '').startsWith(SMP);
 const hasSample = () => DB.vouchers.some(isSmp) || DB.contacts.some(isSmp) || DB.employees.some(isSmp);
-const sampleBanner = () => hasSample() ? `<div class="banner"><span><b>Sample data is loaded</b> for July to September 2026: customers, suppliers, invoices, bills, card sales, staff, attendance, payroll, bank statement and reconciliations.</span><button class="btn ghost sm" data-act="removeSample">Remove sample data</button></div>` : (!DB.employees.length && !DB.vouchers.some(v => v.type === 'INV' || v.type === 'BILL') ? `<div class="banner" style="background:var(--gold-soft);color:var(--ink);border-color:#E6D3A8"><span><b>New here?</b> Load sample customers, suppliers, invoices, bills, staff, attendance, payroll and a bank statement for July to September 2026 to see every page working. Remove it in one click when you are done.</span><button class="btn sm" data-act="loadSample">Load sample data</button></div>` : '');
+const sampleBanner = () => hasSample() ? `<div class="banner" style="background:var(--gold-soft);color:var(--ink);border-color:#E3D3AE"><span><b>Sample data is loaded</b> for July to September 2026: customers, suppliers, invoices, bills, card sales, staff, attendance, payroll, bank statement and reconciliations.</span><button class="btn ghost sm" data-act="removeSample">Remove sample data</button></div>` : (!DB.employees.length && !DB.vouchers.some(v => v.type === 'INV' || v.type === 'BILL') ? `<div class="banner" style="background:var(--gold-soft);color:var(--ink);border-color:#E3D3AE"><span><b>New here?</b> Load sample customers, suppliers, invoices, bills, staff, attendance, payroll and a bank statement for July to September 2026 to see every page working. Remove it in one click when you are done.</span><button class="btn sm" data-act="loadSample">Load sample data</button></div>` : '');
 
 function sampleRng(seed){ return () => { seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 
