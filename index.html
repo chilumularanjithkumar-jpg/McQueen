@@ -432,6 +432,18 @@ a,.link{color:#8A6F37}
 .tabs{flex-wrap:wrap;row-gap:0}
 .bud td{padding:2px 3px}
 .side-foot button{all:unset;cursor:pointer;color:var(--gold);text-decoration:underline}
+
+/* ---------- phase 1–6 ---------- */
+.goto input{width:100%;font-size:16px;padding:12px 14px;border:1.5px solid var(--ink);border-radius:12px;margin:6px 0 10px}
+.goto-row{all:unset;box-sizing:border-box;cursor:pointer;display:flex;justify-content:space-between;width:100%;padding:9px 12px;border-radius:10px}
+.goto-row small{color:var(--muted)} .goto-row.on,.goto-row:hover{background:var(--gold-soft)}
+kbd{display:inline-block;border:1px solid var(--line);border-bottom-width:2px;border-radius:6px;padding:1px 7px;font:600 12px var(--sans);background:var(--surface)}
+.items tr.subrow td{border-top:0;padding-top:0}
+.items tr.subrow label{display:flex;align-items:center;gap:6px} .items tr.subrow select,.items tr.subrow input{width:auto;padding:5px 8px;font-size:13px}
+.hist{border-bottom:1px solid var(--line-2);padding:8px 0} .hist ul{margin:4px 0 0 18px;font-size:13.5px}
+#printArea .chq{position:relative;font:12pt Arial,sans-serif} #printArea .chq>div{position:absolute;white-space:nowrap} #printArea .chq>div[style*="width"]{white-space:normal}
+#printArea .rcpt{width:72mm;font:11px/1.35 'Courier New',monospace;color:#000} .rcpt .c{text-align:center} .rcpt .b{font-weight:700} .rcpt hr{border:0;border-top:1px dashed #000;margin:4px 0}
+@media screen{ #printArea .chq{border:1px dashed #999;background:#fff} }
 </style>
 </head>
 <body>
@@ -676,8 +688,16 @@ const TYPES = {
   NOTE: {name:'Note',             prefix:'NTE', verb:'Note'},
   CN:   {name:'Credit note',      prefix:'CRN', verb:'Credit note'},
   DN:   {name:'Debit note',       prefix:'DBN', verb:'Debit note'},
-  ADJ:  {name:'Stock adjustment', prefix:'ADJ', verb:'Stock adjustment'}
+  ADJ:  {name:'Stock adjustment', prefix:'ADJ', verb:'Stock adjustment'},
+  STR:  {name:'Stock transfer',   prefix:'STR', verb:'Transfer'},
+  QUO:  {name:'Quotation',        prefix:'QUO', verb:'Quotation'},
+  SO:   {name:'Sales order',      prefix:'SO',  verb:'Order'},
+  DLN:  {name:'Delivery note',    prefix:'DLN', verb:'Delivery note'},
+  PO:   {name:'Purchase order',   prefix:'PO',  verb:'Order'},
+  GRN:  {name:'Goods received note', prefix:'GRN', verb:'GRN'}
 };
+const QTY_TYPES = ['INV','CN','QUO','SO','PO','DLN','GRN'], NONPOST = ['QUO','SO','PO','DLN','GRN','STR','NOTE'];
+
 const ACC_TYPES = {asset:'Assets', liability:'Liabilities', equity:'Equity', income:'Income', expense:'Expenses'};
 const ROLE_LABEL = {cash:'Cash', bank:'Bank', ar:'Receivables', ap:'Payables', vatin:'VAT input', vatout:'VAT output', obe:'Opening balances', re:'Retained earnings', '':''};
 const VAT_CODES = {SR:'Standard rated', ZR:'Zero rated', EX:'Exempt', NA:'No VAT'};
@@ -753,7 +773,7 @@ function freshDB(s){
     }, s),
     accounts: DEFAULT_ACCOUNTS.map(([code,name,type,role]) => ({code, name, type, role, active:true})),
     contacts: [], vouchers: [], statement: [], recons: [], audit: [], employees: [], attendance: {}, payruns: [], advances: [],
-    products: [], assets: [], cheques: [], recurring: [], budgets: [], branches: [], currencies: [], users: []
+    products: [], assets: [], cheques: [], recurring: [], budgets: [], branches: [], currencies: [], users: [], locations: [], priceLists: [], editlog: []
   };
 }
 function normalize(){
@@ -766,7 +786,7 @@ function normalize(){
   DB.vouchers.forEach(v => { v.items ||= []; v.alloc ||= []; v.amount = r2(v.amount); });
   if(!DB.settings.supSeeded){ seedSuppliers(); DB.settings.supSeeded = true; }
   hrNormalize();
-  for(const k of ['products','assets','cheques','recurring','budgets','branches','currencies','users']) if(!Array.isArray(DB[k])) DB[k] = [];
+  for(const k of ['products','assets','cheques','recurring','budgets','branches','currencies','users','locations','priceLists','editlog']) if(!Array.isArray(DB[k])) DB[k] = [];
   for(const [code, name, type] of [['1350','Inventory (stock)','asset'], ['5100','Cost of goods sold','expense'], ['5150','Stock adjustments and write-offs','expense'], ['2500','Corporate tax payable','liability'], ['6990','Corporate tax','expense'], ['6970','Exchange differences','expense']])
     if(!acc(code)) DB.accounts.push({code, name, type, role:'', active:true});
   DB.accounts.sort((a,b)=>a.code.localeCompare(b.code));
@@ -808,7 +828,7 @@ function totals(v){
   const rows = (v.items || []).map(it => {
     const r = vatRateOf(it);
     let net, tax, gross;
-    if(v.type === 'INV' || v.type === 'CN'){ net = r2((+it.qty || 0) * (+it.rate || 0)); tax = r2(net * r); gross = r2(net + tax); }
+    if(QTY_TYPES.includes(v.type)){ net = r2((+it.qty || 0) * (+it.rate || 0)); tax = r2(net * r); gross = r2(net + tax); }
     else if(v.incl){ gross = r2(it.amount); net = r2(gross / (1 + r)); tax = r2(gross - net); }
     else { net = r2(it.amount); tax = r2(net * r); gross = r2(net + tax); }
     return {it, net, tax, gross};
@@ -817,7 +837,7 @@ function totals(v){
   return {rows, net, tax, total: r2(net + tax)};
 }
 function docTotal(v){
-  if(['INV','BILL','SAL','EXP','CN','DN'].includes(v.type)) return totals(v).total;
+  if(['INV','BILL','SAL','EXP','CN','DN','QUO','SO','PO','DLN','GRN'].includes(v.type)) return totals(v).total;
   if(v.type === 'JV') return r2(v.items.reduce((s,i)=>s + (+i.dr || 0), 0));
   if(v.type === 'ADJ') return r2(post(v).reduce((s,l)=>s + l.dr, 0) / 2);
   return r2(v.amount);
@@ -898,7 +918,7 @@ function sortedVouchers(){
 function allLines(){
   if(memo.lines) return memo.lines;
   const out = [];
-  for(const v of sortedVouchers()) for(const l of post(v)) out.push({...l, v, date:v.date});
+  for(const v of sortedVouchers()){ if(v.appr === 'pending' || NONPOST.includes(v.type)) continue; for(const l of post(v)) out.push({...l, v, date:v.date}); }
   return memo.lines = out;
 }
 function linesOf(code){ return (memo['lo'+code] ??= allLines().filter(l => l.acc === code)); }
@@ -929,7 +949,7 @@ function cashLedger(code, from, to){
 
 /* ---------------- documents: outstanding and status ---------------- */
 function allocatedTo(docId){
-  memo.alloc ??= (() => { const m = {}; for(const v of DB.vouchers) for(const a of (v.alloc||[])) m[a.doc] = r2((m[a.doc]||0) + (+a.amt||0)); return m; })();
+  memo.alloc ??= (() => { const m = {}; for(const v of DB.vouchers) if(v.appr !== 'pending') for(const a of (v.alloc||[])) m[a.doc] = r2((m[a.doc]||0) + (+a.amt||0)); return m; })();
   return memo.alloc[docId] || 0;
 }
 function outstanding(v){ return r2(docTotal(v) - allocatedTo(v.id)); }
@@ -1104,7 +1124,7 @@ async function loadFromFolder(fresh){
       DB = sqliteToDB(new Uint8Array(await f.arrayBuffer()));
     } else if((fh = await fileIn(dirHandle, XLSX_DB_FILE)) || (fh = await fileIn(dirHandle, OLD_FILE))){
       migrated = fh.name; DB = wbToDB(XLSX.read(await (await fh.getFile()).arrayBuffer(), {type:'array'}));
-    }
+    } else { const nn = typeof takeNewCompany === 'function' ? takeNewCompany() : ''; if(nn){ DB = freshDB({biz:nn}); fresh = true; } }
     normalize(); invalidate(); saveLocal();
     await writeNow(true);
     if(readOnly){ save = {mode:'readonly', at:null, msg:'', skipped:[]}; } else startLockBeat();
@@ -1692,7 +1712,7 @@ async function reloadFromFile(){
    forms.js — one form engine for every entry type
    ===================================================================== */
 let F = null;            // the entry being edited
-const blankItem = type => type === 'ADJ' ? {product:'', qty:'', acc:'5150'} : (type === 'INV' || type === 'CN') ? {acc:'4000', desc:'', qty:1, rate:'', vat: DB.settings.vatOn ? 'SR' : 'NA'}
+const blankItem = type => type === 'ADJ' ? {product:'', qty:'', acc:'5150'} : type === 'STR' ? {product:'', qty:'', loc:'', toLoc:''} : ['PO','GRN'].includes(type) ? {acc:'1350', desc:'', qty:1, rate:'', vat: DB.settings.vatOn ? 'SR' : 'NA'} : QTY_TYPES.includes(type) ? {acc:'4000', desc:'', qty:1, rate:'', vat: DB.settings.vatOn ? 'SR' : 'NA'}
   : type === 'JV' ? {acc:'', desc:'', dr:'', cr:'', party:''}
   : {acc: type === 'SAL' ? '4000' : '', desc:'', amount:'', vat: DB.settings.vatOn ? 'SR' : 'NA'};
 
@@ -1708,6 +1728,8 @@ function newVoucher(type, opts={}){
     case 'PAY': v.payAcc = roleAcc('bank') || '1100'; break;
     case 'TRF': v.payAcc = opts.from || '1000'; v.toAcc = opts.to || roleAcc('bank') || '1100'; if(opts.amount) v.amount = opts.amount; if(opts.memo) v.memo = opts.memo; break;
     case 'JV': v.items = [blankItem('JV'), blankItem('JV')]; v.incl = false; break;
+    case 'QUO': case 'SO': case 'DLN': case 'PO': case 'GRN': v.items = [blankItem(type)]; v.incl = false; v.due = addDays(date, type === 'QUO' ? 15 : 7); break;
+    case 'STR': v.items = [blankItem('STR')]; v.incl = false; break;
     case 'ADJ': v.items = [blankItem('ADJ')]; v.incl = false; if(opts.product) v.items[0].product = opts.product; break;
     case 'CN': case 'DN': { v.incl = false; const src = vById(opts.inv || opts.bill);
       if(src){ v.party = src.party; v.against = src.id; v.ref = src.no; v.items = JSON.parse(JSON.stringify(src.items)); }
@@ -1721,7 +1743,7 @@ function newVoucher(type, opts={}){
   return v;
 }
 function openVoucher(v){ F = v; F._orig = v.id ? JSON.parse(JSON.stringify(vById(v.id))) : null; drawForm(); }
-function drawForm(){ openDlg(voucherForm(F), ['INV','BILL','JV','EXP','SAL'].includes(F.type) ? 'wide' : 'mid'); liveTotals(); }
+function drawForm(){ openDlg(voucherForm(F), ['INV','BILL','JV','EXP','SAL','CN','DN','QUO','SO','PO','DLN','GRN','ADJ','STR'].includes(F.type) ? 'wide' : 'mid'); liveTotals(); }
 
 /* ---------- form markup ---------- */
 const fld = (label, html, cls='') => `<div class="field ${cls}"><label>${label}</label>${html}</div>`;
@@ -1781,13 +1803,22 @@ function voucherForm(v){
     case 'ADJ': {
       head = `<div class="grid3">${fld('Date', inp('date', v.date, 'type="date" required'))}${fld('Reason', inp('memo', v.memo, 'placeholder="e.g. Month-end stock count"'))}</div>`;
       body = typeof adjTable === 'function' ? adjTable(v) : ''; break; }
+    case 'QUO': case 'SO': case 'DLN': case 'PO': case 'GRN': {
+      const sale = ['QUO','SO','DLN'].includes(v.type), src = v.link ? vById(v.link) : null;
+      head = `<div class="grid4">${contactPick(sale ? 'customer' : 'supplier')}${fld('Date', inp('date', v.date, 'type="date" required'))}
+        ${fld(({QUO:'Valid until', SO:'Deliver by', DLN:'Delivered on', PO:'Expected by', GRN:'Received on'})[v.type], inp('due', v.due, 'type="date"'))}${fld(sale ? 'Customer ref / PO' : 'Supplier ref / DN no.', inp('ref', v.ref))}</div>${quick}
+        ${src ? `<p class="mini" style="margin:6px 0 0">From ${esc(TYPES[src.type].name.toLowerCase())} <button type="button" class="link" data-act="editV" data-id="${src.id}">${esc(src.no)}</button></p>` : ''}`;
+      body = itemsTable(v, sale ? isIncome : isCost, sale ? 'Income account' : 'Account') + `<div style="margin-top:10px">${fld(v.type === 'QUO' ? 'Terms on the quotation' : 'Notes', inp('memo', v.memo))}</div>` + (typeof orderProgress === 'function' && v.id ? orderProgress(v) : ''); break; }
+    case 'STR':
+      head = `<div class="grid3">${fld('Date', inp('date', v.date, 'type="date" required'))}${fld('Remarks', inp('memo', v.memo, 'placeholder="e.g. Products moved to the beauty counter"'))}</div>`;
+      body = typeof strTable === 'function' ? strTable(v) : ''; break;
     case 'NOTE':
       head = `<div class="grid3">${fld('Date', inp('date', v.date, 'type="date" required'))}${fld('Account', `<select name="payAcc">${accOptions(pay, v.payAcc)}</select>`)}</div><div style="margin-top:12px">${fld('Note', inp('memo', v.memo))}</div>`; break;
   }
   const canPay = editing && ['INV','BILL'].includes(v.type) && outstanding(vById(v.id)) > 0.005;
   return `<form class="dlg" id="vform" data-form="voucher" autocomplete="off">
     <h2>${editing ? `${T.name} ${esc(v.no)}` : 'New ' + T.name.toLowerCase()}</h2>
-    <p>${locked ? `<b>Locked period.</b> Entries up to ${dLong(DB.settings.lockDate)} cannot be changed.` : ({SAL:'Money taken at the counter. Amounts include VAT when VAT applies.', EXP:'A cost paid straight away from cash, petty cash or the bank.', INV:'Bill a customer. VAT is added on top of the prices.', BILL:'A supplier invoice to pay later.', RCPT:'Money in from a customer, applied to their invoices.', PAY:'Money out to a supplier, applied to their bills.', TRF:'Money moved between your own accounts.', JV:'Debits must equal credits.', NOTE:'A remark in the cash book; no money moves.', CN:'Reduces what a customer owes: a return, discount or cancelled service. Prints as a tax credit note.', ADJ:'Counts, damages, internal use or opening stock. Values use the average cost unless you enter a unit cost for stock coming in.', DN:'Reduces what you owe a supplier: goods returned or an overcharge.'})[v.type]}</p>
+    <p>${locked ? `<b>Locked period.</b> Entries up to ${dLong(DB.settings.lockDate)} cannot be changed.` : ({SAL:'Money taken at the counter. Amounts include VAT when VAT applies.', EXP:'A cost paid straight away from cash, petty cash or the bank.', INV:'Bill a customer. VAT is added on top of the prices.', BILL:'A supplier invoice to pay later.', RCPT:'Money in from a customer, applied to their invoices.', PAY:'Money out to a supplier, applied to their bills.', TRF:'Money moved between your own accounts.', JV:'Debits must equal credits.', NOTE:'A remark in the cash book; no money moves.', CN:'Reduces what a customer owes: a return, discount or cancelled service. Prints as a tax credit note.', STR:'Moves stock between locations. Quantities change, the value does not.', QUO:'A price offer. Nothing is posted.', SO:'A confirmed customer order. Nothing is posted until it is invoiced.', DLN:'Goods handed over to the customer. Nothing is posted until it is invoiced.', PO:'An order to a supplier. Nothing is posted until the bill arrives.', GRN:'Goods received from a supplier. Nothing is posted until the bill is entered.', ADJ:'Counts, damages, internal use or opening stock. Values use the average cost unless you enter a unit cost for stock coming in.', DN:'Reduces what you owe a supplier: goods returned or an overcharge.'})[v.type]}</p>
     <div class="stack" style="gap:6px">${head}${typeof extraHead === 'function' ? extraHead(v) : ''}</div>
     ${body}
     ${['SAL','EXP','BILL'].includes(v.type) && vatOn ? `<label class="mini" style="display:flex;gap:8px;align-items:center;margin-top:6px"><input type="checkbox" class="chk" name="incl" ${v.incl?'checked':''} data-change="redraw"> Amounts include VAT</label>` : ''}
@@ -1796,7 +1827,7 @@ function voucherForm(v){
     <datalist id="dlPayee">${payeeList()}</datalist>
     <div class="dlg-foot" style="margin-top:18px">
       ${editing && !locked ? `<button type="button" class="btn danger" data-act="delV">Delete</button>` : ''}
-      ${editing ? `<button type="button" class="btn ghost" data-act="printV" data-id="${v.id}">${ic('print',15)}Print</button>` : ''}
+      ${editing ? `<button type="button" class="btn ghost" data-act="printV" data-id="${v.id}">${ic('print',15)}Print</button>` : ''}${editing && typeof orderButtons === 'function' ? orderButtons(v) : ''}${editing && typeof ctlButtons === 'function' ? ctlButtons(v) : ''}
       ${editing && !locked && v.type === 'INV' ? `<button type="button" class="btn ghost" data-act="newV" data-t="CN" data-inv="${v.id}">Credit note</button>` : ''}
       ${editing && ['INV','CN'].includes(v.type) ? `<button type="button" class="btn ghost" data-act="einvDlg" data-id="${v.id}">E-invoice</button>` : ''}
       ${editing && !payrollRef(v.id) && ['SAL','EXP','INV','BILL','TRF','JV'].includes(v.type) ? `<button type="button" class="btn ghost" data-act="makeRec" data-id="${v.id}">Make recurring</button>` : ''}
@@ -1807,8 +1838,8 @@ function voucherForm(v){
     </div></form>`;
 }
 function itemsTable(v, filter, accLabel){
-  const isInv = v.type === 'INV' || v.type === 'CN', vatOn = showVat(), withStaff = (v.type === 'SAL' || isInv) && DB.employees.length;
-  const withProd = DB.products.some(p => p.active !== false) && ['SAL','INV','CN','BILL','EXP','DN'].includes(v.type), withQty = isInv || withProd;
+  const isInv = QTY_TYPES.includes(v.type), vatOn = showVat(), withStaff = (v.type === 'SAL' || isInv) && DB.employees.length;
+  const withProd = DB.products.some(p => p.active !== false) && ['SAL','INV','CN','BILL','EXP','DN','QUO','SO','PO','DLN','GRN'].includes(v.type), withQty = isInv || withProd;
   return `<table class="items"><thead><tr>${withProd ? '<th style="width:16%">Stock item</th>' : ''}<th style="width:${isInv?'20%':'22%'}">${accLabel}</th><th>Description</th>${withStaff ? '<th style="width:14%">Staff (commission)</th>' : ''}${withQty ? '<th style="width:7%" class="r">Qty</th>' : ''}${isInv ? '<th style="width:11%" class="r">Rate</th>' : ''}
     ${vatOn ? '<th style="width:14%">VAT</th>' : ''}<th style="width:12%" class="r">${isInv ? 'Net' : 'Amount'}</th><th style="width:34px"></th></tr></thead><tbody>
     ${v.items.map((it,n) => `<tr>${withProd ? `<td><select name="i${n}-product" data-change="product" data-n="${n}"><option value="">–</option>${DB.products.filter(p => p.active !== false || p.id === it.product).sort((a,b)=>a.name.localeCompare(b.name)).map(p => opt(p.id, p.name, it.product)).join('')}</select></td>` : ''}
@@ -1818,7 +1849,7 @@ function itemsTable(v, filter, accLabel){
       ${isInv ? `<td class="r">${inp(`i${n}-rate`, it.rate, 'type="number" step="0.01"')}</td>` : ''}
       ${vatOn ? `<td>${vatSelect(`i${n}-vat`, it.vat)}</td>` : ''}
       <td class="r">${isInv ? `<input id="i${n}-net" readonly tabindex="-1">` : inp(`i${n}-amount`, it.amount, 'type="number" step="0.01" inputmode="decimal"')}</td>
-      <td>${v.items.length > 1 ? `<button type="button" class="x" data-act="delItem" data-n="${n}" aria-label="Remove line">${ic('x',14)}</button>` : ''}</td></tr>`).join('')}
+      <td>${v.items.length > 1 ? `<button type="button" class="x" data-act="delItem" data-n="${n}" aria-label="Remove line">${ic('x',14)}</button>` : ''}</td></tr>${typeof stockSubRow === 'function' ? stockSubRow(v, it, n, (withProd?1:0) + 3 + (withStaff?1:0) + (withQty?1:0) + (isInv?1:0) + (vatOn?1:0) + 1) : ''}`).join('')}
     </tbody></table><button type="button" class="btn ghost sm" data-act="addItem">${ic('plus',14)}Add line</button>
     ${v.type === 'EXP' ? `<datalist id="dlDesc">${[...new Set(DB.vouchers.filter(x => x.type === 'EXP').flatMap(x => x.items.map(i => (i.desc||'').trim())).filter(Boolean))].sort().map(d => `<option value="${esc(d)}">`).join('')}</datalist>` : ''}`;
 }
@@ -1849,9 +1880,9 @@ function allocTable(v){
 function readForm(){
   const f = $('#vform'); if(!f || !F) return;
   const g = n => { const el = f.elements[n]; return el ? el.value : undefined; };
-  for(const k of ['date','due','party','pname','ref','memo','payAcc','toAcc','amount','against','branch','cur','fx']){ const x = g(k); if(x !== undefined) F[k] = x; }
+  for(const k of ['date','due','party','pname','ref','memo','payAcc','toAcc','amount','against','branch','cur','fx','link']){ const x = g(k); if(x !== undefined) F[k] = x; }
   if(f.elements.incl) F.incl = f.elements.incl.checked;
-  F.items.forEach((it, n) => { for(const k of ['acc','desc','qty','rate','amount','vat','dr','cr','party','staff','product','cost','branch']){ const x = g(`i${n}-${k}`); if(x !== undefined) it[k] = x; } });
+  F.items.forEach((it, n) => { for(const k of ['acc','desc','qty','rate','amount','vat','dr','cr','party','staff','product','cost','branch','loc','uom','batch','exp','toLoc','src']){ const x = g(`i${n}-${k}`); if(x !== undefined) it[k] = x; } });
   if(F.type === 'RCPT' || F.type === 'PAY'){
     F.alloc = [...f.querySelectorAll('input[name^="a-"]')].map(el => ({doc: el.name.slice(2), amt: r2(num(el.value))})).filter(a => a.amt > 0);
   }
@@ -1861,9 +1892,9 @@ function liveTotals(){
   const box = $('#totBox'), pv = $('#postPrev'); if(!box) return;
   const cur = DB.settings.cur;
   if(F.type === 'ADJ'){ const tmp = cleanVoucher(JSON.parse(JSON.stringify(F))); tmp.id = tmp.id || '__new'; box.innerHTML = `<div class="tot-box"><div class="g"><span>Stock value change</span><span class="num">${fmt(typeof adjPreview === 'function' ? adjPreview(tmp) : 0)}</span></div></div>`; }
-  else if(['SAL','EXP','INV','BILL','CN','DN'].includes(F.type)){
+  else if(['SAL','EXP','INV','BILL','CN','DN','QUO','SO','PO','DLN','GRN'].includes(F.type)){
     const t = totals(F);
-    if(F.type === 'INV' || F.type === 'CN') t.rows.forEach((r,n) => { const el = $(`#i${n}-net`); if(el) el.value = fmt(r.net); });
+    if(QTY_TYPES.includes(F.type)) t.rows.forEach((r,n) => { const el = $(`#i${n}-net`); if(el) el.value = fmt(r.net); });
     const dc = F.cur && F.cur !== cur ? F.cur : cur, fx = num(F.fx) || 1;
     box.innerHTML = `<div class="tot-box"><div><span>Net</span><span class="num">${fmt(t.net)}</span></div>${t.tax || showVat() ? `<div><span>VAT</span><span class="num">${fmt(t.tax)}</span></div>` : ''}<div class="g"><span>Total ${dc}</span><span class="num">${fmt(t.total)}</span></div>${dc !== cur ? `<div class="mini"><span>In ${cur} at ${fx}</span><span class="num">${fmt(t.total * fx)}</span></div>` : ''}</div>`;
   } else if(F.type === 'JV'){
@@ -1879,12 +1910,14 @@ function liveTotals(){
     pv.innerHTML = L.length ? `<table><thead><tr><th>Account</th><th class="r">Debit</th><th class="r">Credit</th></tr></thead><tbody>${L.map(l => `<tr><td>${esc(accLabel(l.acc))}${l.party ? ` <span class="mini">${esc(contact(l.party)?.name||'')}</span>` : ''}</td><td class="r num">${fmtZ(l.dr)}</td><td class="r num">${fmtZ(l.cr)}</td></tr>`).join('')}</tbody></table>` : '<p class="mini">Nothing to post yet.</p>';
   }
 }
+const stockExtras = i => ({...(i.loc ? {loc:i.loc} : {}), ...(i.uom ? {uom:i.uom} : {}), ...(i.batch ? {batch:String(i.batch).trim()} : {}), ...(i.exp ? {exp:i.exp} : {}), ...(i.src !== undefined && i.src !== '' && i.src !== null ? {src:+i.src} : {}), ...(i.toLoc ? {toLoc:i.toLoc} : {})});
 function cleanVoucher(v){
   v.amount = r2(num(v.amount));
-  if(['SAL','EXP','BILL','DN'].includes(v.type)) v.items = v.items.map(i => ({acc:i.acc, desc:(i.desc||'').trim(), amount:r2(num(i.amount)), vat: i.vat || 'NA', ...(i.vat === 'SR' ? {vr: i.vr ?? DB.settings.vatRate} : {}), ...(i.staff && v.type === 'SAL' ? {staff:i.staff} : {}), ...(i.product ? {product:i.product, qty: num(i.qty) || 1} : {})})).filter(i => i.acc && i.amount);
-  if(v.type === 'INV' || v.type === 'CN') v.items = v.items.map(i => ({acc:i.acc, desc:(i.desc||'').trim(), qty: i.qty === '' || i.qty == null ? 1 : num(i.qty), rate:r2(num(i.rate)), vat: i.vat || 'NA', ...(i.vat === 'SR' ? {vr: i.vr ?? DB.settings.vatRate} : {}), ...(i.staff ? {staff:i.staff} : {}), ...(i.product ? {product:i.product} : {})})).filter(i => i.acc && (i.qty * i.rate));
+  if(['SAL','EXP','BILL','DN'].includes(v.type)) v.items = v.items.map(i => ({acc:i.acc, desc:(i.desc||'').trim(), amount:r2(num(i.amount)), vat: i.vat || 'NA', ...(i.vat === 'SR' ? {vr: i.vr ?? DB.settings.vatRate} : {}), ...(i.staff && v.type === 'SAL' ? {staff:i.staff} : {}), ...(i.product ? {product:i.product, qty: num(i.qty) || 1} : {}), ...stockExtras(i)})).filter(i => i.acc && i.amount);
+  if(QTY_TYPES.includes(v.type)) v.items = v.items.map(i => ({acc:i.acc, desc:(i.desc||'').trim(), qty: i.qty === '' || i.qty == null ? 1 : num(i.qty), rate:r2(num(i.rate)), vat: i.vat || 'NA', ...(i.vat === 'SR' ? {vr: i.vr ?? DB.settings.vatRate} : {}), ...(i.staff ? {staff:i.staff} : {}), ...(i.product ? {product:i.product} : {}), ...stockExtras(i)})).filter(i => i.acc && (i.qty * i.rate || (['DLN','GRN'].includes(v.type) && i.qty)));
   if(v.type === 'JV') v.items = v.items.map(i => ({acc:i.acc, desc:(i.desc||'').trim(), dr:r2(num(i.dr)), cr:r2(num(i.cr)), ...(i.party && ['ar','ap'].includes(acc(i.acc)?.role) ? {party:i.party} : {}), ...(i.branch ? {branch:i.branch} : {}), ...(i.asset ? {asset:i.asset} : {})})).filter(i => i.acc && (i.dr || i.cr));
-  if(v.type === 'ADJ') v.items = v.items.map(i => ({product:i.product, qty:num(i.qty), acc:i.acc || '5150', ...(num(i.cost) > 0 ? {cost:r2(num(i.cost))} : {})})).filter(i => i.product && i.qty);
+  if(v.type === 'ADJ') v.items = v.items.map(i => ({product:i.product, qty:num(i.qty), acc:i.acc || '5150', ...(num(i.cost) > 0 ? {cost:r2(num(i.cost))} : {}), ...stockExtras(i)})).filter(i => i.product && i.qty);
+  if(v.type === 'STR') v.items = v.items.map(i => ({product:i.product, qty:num(i.qty), ...stockExtras(i)})).filter(i => i.product && i.qty > 0);
   if(v.branch === undefined || v.branch === '') delete v.branch;
   if(!v.cur || v.cur === DB.settings.cur){ delete v.cur; delete v.fx; } else { v.fx = num(v.fx) > 0 ? num(v.fx) : 1; }
   if(!['SAL','EXP','BILL'].includes(v.type)) v.incl = false;
@@ -1919,6 +1952,9 @@ function saveVoucher(){
       if(v.items.length < 2) return err('A journal needs at least two lines.'); if(Math.abs(dr - cr) > 0.005) return err(`Debits ${fmt(dr)} and credits ${fmt(cr)} must be equal.`); if(!dr) return err('Enter the amounts.'); break; }
     case 'NOTE': if(!v.memo) return err('Write the note.'); break;
     case 'ADJ': if(!v.items.length) return err('Add at least one stock item with a quantity.'); break;
+    case 'STR': if(!v.items.length) return err('Add at least one item and quantity.'); if(v.items.some(i => (i.loc || '') === (i.toLoc || ''))) return err('Choose two different locations.'); break;
+    case 'QUO': case 'SO': case 'DLN': if(!v.party) return err('Choose the customer.'); if(!v.items.length) return err('Add at least one line.'); break;
+    case 'PO': case 'GRN': if(!v.party) return err('Choose the supplier.'); if(!v.items.length) return err('Add at least one line.'); break;
     case 'CN': case 'DN': {
       const isCN = v.type === 'CN'; if(!v.party) return err(`Choose the ${isCN ? 'customer' : 'supplier'}.`); if(!v.items.length) return err('Add at least one line with an amount.');
       v.alloc = []; const d = v.against ? vById(v.against) : null;
@@ -1942,7 +1978,7 @@ function deleteVoucher(){
   const o = F._orig;
   if(lockedDate(o.date)) return toast(`The books are locked up to ${dLong(DB.settings.lockDate)}.`);
   if(payrollRef(o.id)) return toast('This entry was made by payroll or a staff advance. Use Back to draft on the Payroll page instead.');
-  const users = DB.vouchers.filter(v => (v.alloc||[]).some(a => a.doc === o.id));
+  const users = DB.vouchers.filter(v => (v.alloc||[]).some(a => a.doc === o.id) || v.link === o.id);
   if(users.length) return toast(`${users.map(u => u.no).join(', ')} ${users.length > 1 ? 'are' : 'is'} applied to this ${TYPES[o.type].name.toLowerCase()}. Delete or change ${users.length > 1 ? 'them' : 'it'} first.`);
   if(!confirmBox(`Delete ${o.no}? This cannot be undone, but yesterday's copy stays in the Backups folder.`)) return;
   DB.vouchers = DB.vouchers.filter(v => v.id !== o.id);
@@ -1963,7 +1999,7 @@ Object.assign(ACT, {
     const c = {id:uid('c'), kind:d.k, name, phone:f.elements['q-phone'].value.trim(), email:'', trn:f.elements['q-trn'].value.trim(), address:'', terms: d.k === 'customer' ? +DB.settings.terms || 30 : 30};
     readForm(); DB.contacts.push(c); F.party = c.id; delete F._quick; invalidate(); saveLocal(); drawForm(); toast(name + ' added'); },
   printInv: d => { const v = vById(d.id); if(v) printHTML(invoiceHTML(v)); },
-  printV: d => { const v = vById(d.id); if(v) printHTML(['INV','CN'].includes(v.type) ? invoiceHTML(v) : voucherHTML(v)); },
+  printV: d => { const v = vById(d.id); if(v) printHTML(['INV','CN'].includes(v.type) ? invoiceHTML(v) : ORDER_FLOW[v.type] ? orderHTML(v) : voucherHTML(v)); },
   payDoc: d => { const v = vById(d.id); if(!v) return; openVoucher(newVoucher(v.type === 'INV' ? 'RCPT' : 'PAY', {doc:v.id})); }
 });
 Object.assign(CHANGE, {
@@ -2220,7 +2256,7 @@ function contactDlg(c){
     <p>${isNew ? (isSup ? 'A shop, company or person you pay. Only the name is required.' : 'Someone you send invoices to. Only the name is required.') : (isSup ? `Supplier · ${money(docs.filter(v => v.date.startsWith(Y)).reduce((t,v)=>t+docTotal(v),0))} spent in ${Y}` : 'Customer') + (Math.abs(st.bal) > 0.005 ? ` · ${isSup ? 'you owe' : 'owes you'} ${money(st.bal)}` : '')}</p>
     <div class="grid3">${fld('Name', inp('name', c.name, 'required autofocus'))}${fld('Phone', inp('phone', c.phone, 'type="tel"'))}${fld('Email', inp('email', c.email, 'type="email"'))}
       ${fld('TRN', inp('trn', c.trn, 'placeholder="If VAT registered"'))}${isSup ? fld('Usual category', `<select name="cat">${accOptions(a => a.type === 'expense' || (a.type === 'asset' && !a.role), c.cat, 'None')}</select>`) : ''}${fld('Payment terms (days)', inp('terms', c.terms ?? 30, 'type="number" min="0"'))}
-      ${!isSup ? fld('E-invoicing (Peppol) ID', inp('peppol', c.peppol, 'placeholder="For B2B e-invoices"')) : ''}${DB.currencies.length ? fld('Currency', `<select name="cur">${opt('', DB.settings.cur + ' (base)', c.cur || '')}${DB.currencies.map(x => opt(x.code, x.code, c.cur || '')).join('')}</select>`) : ''}</div>
+      ${!isSup ? fld('E-invoicing (Peppol) ID', inp('peppol', c.peppol, 'placeholder="For B2B e-invoices"')) : ''}${!isSup && DB.priceLists.length ? fld('Price list', `<select name="priceList">${opt('', 'Standard prices', c.priceList || '')}${DB.priceLists.map(l => opt(l.id, l.name, c.priceList || '')).join('')}</select>`) : ''}${DB.currencies.length ? fld('Currency', `<select name="cur">${opt('', DB.settings.cur + ' (base)', c.cur || '')}${DB.currencies.map(x => opt(x.code, x.code, c.cur || '')).join('')}</select>`) : ''}</div>
     <div class="grid3" style="margin-top:12px">${fld('Address', `<textarea name="address" rows="2">${esc(c.address)}</textarea>`, 'wide')}${fld('Type', `<select name="kind">${opt('supplier','Supplier',c.kind)}${opt('customer','Customer',c.kind)}</select>`)}</div>
     ${docs.length ? `<h3 style="font:400 20px var(--serif);margin:18px 0 6px">Purchases</h3><div class="tbl-wrap" style="max-height:240px;overflow:auto"><table><thead><tr><th>Date</th><th>Entry</th><th>Details</th><th class="r">Amount</th></tr></thead><tbody>
       ${docs.slice(0,100).map(v => `<tr data-act="editV" data-id="${v.id}"><td>${dShort(v.date)} ${v.date.slice(0,4)}</td><td>${esc(v.no)}</td><td>${esc(v.type === 'BILL' ? 'Bill ' + (v.ref||'') + ' · ' + docStatus(v) : v.items.map(i => i.desc).filter(Boolean).join(', ') + ' · ' + accName(v.payAcc))}</td><td class="r num">${fmt(docTotal(v))}</td></tr>`).join('')}</tbody></table></div>` : ''}
@@ -2378,13 +2414,16 @@ PAGES.settings = () => {
     <div class="grid3">${fld('Employer ID (MOHRE establishment no.)', inp('molId', s.molId, 'placeholder="13 digits"'))}${fld("Your bank's routing code", inp('employerBankCode', s.employerBankCode, 'placeholder="9 digits"'))}${fld('Employer reference', inp('employerRef', s.employerRef, 'placeholder="Optional"'))}</div>
     <label style="display:flex;gap:10px;align-items:center;font-weight:600"><input type="checkbox" class="chk" name="accrueEOS" ${s.accrueEOS !== false && s.accrueEOS !== 'false' ? 'checked' : ''}> Build up the end of service provision every month when payroll is approved</label>
     <div><button class="btn" type="submit">Save payroll settings</button></div></form></section>`;
-  if(tab === 'audit') body = `<section class="panel"><div class="panel-head"><div><h2>Audit log</h2><p>Every entry added, changed or deleted. The full log is in the database file.</p></div></div>
+  if(tab === 'audit') body = (typeof editLogPanel === 'function' ? editLogPanel() : '') + `<section class="panel"><div class="panel-head"><div><h2>Audit log</h2><p>Every entry added, changed or deleted. The full log is in the database file.</p></div></div>
     <div class="tbl-wrap"><table><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Entry</th><th>Details</th></tr></thead><tbody>
     ${DB.audit.slice(-300).reverse().map(a => `<tr><td class="mini">${esc(new Date(a.t).toLocaleString())}</td><td>${esc(a.user)}</td><td>${esc(a.act)}</td><td>${esc(a.no)}</td><td>${esc(a.info)}</td></tr>`).join('') || '<tr><td colspan="5" class="mut">Nothing yet.</td></tr>'}</tbody></table></div></section>`;
   if(tab === 'branches') body = branchSettings();
+  if(tab === 'company2') body = companySettings();
+  if(tab === 'print') body = printSettings();
+  if(tab === 'tally') body = tallySettings();
   if(tab === 'users') body = usersSettings();
   return header('Settings', 'Company details, VAT, the data folder and the audit log', {noNew:true}) +
-    `<div class="tabs" role="tablist">${[['company','Company'],['tax','VAT, tax and period lock'],['payroll','Payroll'],['branches','Branches and currencies'],['users','Users'],...(DEMO ? [] : [['data','Data folder']]),['audit','Audit log']].map(([k,l]) => `<button role="tab" data-act="stab" data-k="${k}" aria-selected="${tab===k}">${l}</button>`).join('')}</div>` + body;
+    `<div class="tabs" role="tablist">${[['company','Company'],['company2','Companies and year end'],['tax','VAT, tax and period lock'],['payroll','Payroll'],['branches','Branches and currencies'],['users','Users'],['print','Printing'],['tally','Tally'],...(DEMO ? [] : [['data','Data folder']]),['audit','Audit log']].map(([k,l]) => `<button role="tab" data-act="stab" data-k="${k}" aria-selected="${tab===k}">${l}</button>`).join('')}</div>` + body;
 };
 
 /* ---------- page actions ---------- */
@@ -2478,7 +2517,7 @@ document.addEventListener('submit', e => {
     const id = f.dataset.id, c = id ? contact(id) : {id:uid('c')};
     const name = v.name.trim(); if(!name) return toast('Enter the name.');
     const dup = DB.contacts.find(x => x.id !== id && x.kind === v.kind && nameKey(x.name) === nameKey(name)); if(dup) return toast(`${dup.name} is already in your ${v.kind}s.`);
-    Object.assign(c, {kind:v.kind, name, phone:v.phone.trim(), email:v.email.trim(), trn:v.trn.trim(), address:v.address.trim(), terms:num(v.terms), cat:v.cat || c.cat || '', peppol:(v.peppol ?? c.peppol ?? '').trim(), cur:v.cur ?? c.cur ?? ''});
+    Object.assign(c, {kind:v.kind, name, phone:v.phone.trim(), email:v.email.trim(), trn:v.trn.trim(), address:v.address.trim(), terms:num(v.terms), cat:v.cat || c.cat || '', peppol:(v.peppol ?? c.peppol ?? '').trim(), cur:v.cur ?? c.cur ?? '', priceList:v.priceList ?? c.priceList ?? ''});
     if(!id) DB.contacts.push(c); audit(id ? 'Changed' : 'Added', null, `${v.kind === 'supplier' ? 'Supplier' : 'Customer'} ${name}`); closeDlg(); state.view = v.kind === 'supplier' ? 'suppliers' : 'customers'; commit(name + (id ? ' saved' : ' added'));
   }
   if(kind === 'account'){
@@ -3401,6 +3440,22 @@ function loadSampleData(){
     const pay = {id:id('v'), no:nextNo('TRF'), type:'TRF', date:'2026-08-20', due:'', party:'', pname:'', ref:'SETTLE-' + e.code, memo:m, payAcc:'1100', toAcc:'2300', amount:x.net, incl:false, items:[], alloc:[], created:now, updated:now};
     DB.vouchers.push(pay); e.settle = Object.assign({}, x, {jv:jv.id, pay:pay.id}); invalidate(); }
 
+  /* ---- locations, batches, alternate units, price list, orders ---- */
+  { const LOC = {id:id('l'), name:'Beauty counter'}; DB.locations.push(LOC);
+    PR.mask.batches = true; PR.gel.altUnit = 'box'; PR.gel.altFactor = 6; PR.sham.reorderQty = 24; PR.serum.reorderQty = 12;
+    let bn = 0; for(const v of DB.vouchers.filter(v => isSmp(v) && v.type === 'BILL')) v.items.forEach(it => { if(it.product === PR.mask.id){ bn++; it.batch = 'FM-26' + pad(bn); it.exp = addDays(v.date, bn === 1 ? 120 : 200); } });
+    const pl = {id:id('pl'), name:'Corporate', prices:{[PR.sham.id]:85, [PR.serum.id]:105, [PR.mask.id]:65}}; DB.priceLists.push(pl); C.palace.priceList = pl.id; C.bloom.priceList = pl.id;
+    const mk = (type, date, extra) => { const v = Object.assign({id:id('v'), no:nextNo(type), type, date, due:'', party:'', pname:'', ref:'', memo:'', payAcc:'', toAcc:'', amount:0, incl:false, items:[], alloc:[], created:now, updated:now}, extra); DB.vouchers.push(v); return v; };
+    mk('STR', '2026-07-02', {memo:'Stock for the beauty counter', items:[{product:PR.mask.id, qty:10, toLoc:LOC.id}, {product:PR.gel.id, qty:2, uom:'alt', toLoc:LOC.id}]});
+    const net = (p, price) => r2(price / (1 + VR / 100));
+    const q = mk('QUO', '2026-09-02', {party:C.palace.id, due:'2026-09-17', memo:'Prices valid for 15 days. Delivery within 3 days of order.', items:[{acc:'4100', desc:PR.sham.name, product:PR.sham.id, qty:20, rate:net(PR.sham, 85), vat:'SR', vr:VR}, {acc:'4100', desc:PR.serum.name, product:PR.serum.id, qty:10, rate:net(PR.serum, 105), vat:'SR', vr:VR}]});
+    const so = mk('SO', '2026-09-05', {party:C.palace.id, due:'2026-09-12', ref:'GP-PO-7710', link:q.id, items:q.items.map((it, i) => ({...it, src:i}))});
+    const dl = mk('DLN', '2026-09-08', {party:C.palace.id, due:'2026-09-08', ref:so.no, link:so.id, items:[{...so.items[0], qty:12, src:0}, {...so.items[1], qty:10, src:1}]});
+    mk('INV', '2026-09-09', {party:C.palace.id, due:'2026-10-09', ref:so.no, link:so.id, items:dl.items.map(it => ({...it}))});
+    const po = mk('PO', '2026-09-20', {party:C.gulf.id, due:'2026-09-27', items:[{acc:'1350', desc:PR.serum.name, product:PR.serum.id, qty:15, rate:PR.serum.cost, vat:'SR', vr:VR}, {acc:'1350', desc:PR.mask.name, product:PR.mask.id, qty:10, rate:PR.mask.cost, vat:'SR', vr:VR}]});
+    mk('GRN', '2026-09-25', {party:C.gulf.id, due:'2026-09-25', ref:'GB-DN-5521', link:po.id, items:[{...po.items[0], src:0}, {...po.items[1], qty:6, src:1, batch:'FM-2609', exp:'2027-06-30'}]});
+    mk('BILL', '2026-09-26', {party:C.gulf.id, due:'2026-10-26', ref:'GBS-30177', link:po.id, items:[{acc:'1350', desc:PR.serum.name, product:PR.serum.id, qty:15, amount:r2(15 * PR.serum.cost), vat:'SR', vr:VR, src:0}, {acc:'1350', desc:PR.mask.name, product:PR.mask.id, qty:6, amount:r2(6 * PR.mask.cost), vat:'SR', vr:VR, src:1, batch:'FM-2609', exp:'2027-06-30'}]});
+    invalidate(); }
   /* ---- cheques: one cleared, one received post-dated, one issued for October rent ---- */
   { const inv6 = DB.vouchers.find(v => isSmp(v) && v.type === 'INV' && v.party === C.bloom.id && v.date === '2026-09-06'), inv10 = DB.vouchers.find(v => isSmp(v) && v.type === 'INV' && v.party === C.academy.id && v.date === '2026-09-26');
     const rc = {id:id('v'), no:nextNo('RCPT'), type:'RCPT', date:'2026-09-29', due:'', party:C.bloom.id, pname:'', ref:'Cheque 004512 Emirates NBD', memo:'Cheque 004512', payAcc:'1100', toAcc:'', amount:docTotal(inv6), incl:false, items:[], alloc:[{doc:inv6.id, amt:docTotal(inv6)}], created:now, updated:now};
@@ -3445,7 +3500,7 @@ function removeSampleData(){
   DB.employees = DB.employees.filter(e => !isSmp(e) || usedE.has(e.id));
   DB.payruns = DB.payruns.filter(r => !isSmp(r)); DB.advances = DB.advances.filter(a => !isSmp(a)); DB.recons = DB.recons.filter(r => !isSmp(r));
   DB.statement = DB.statement.filter(s => !isSmp(s)); DB.statement.forEach(s => { if(goneV.has(s.match)) s.match = ''; });
-  DB.products = DB.products.filter(p => !isSmp(p)); DB.assets = DB.assets.filter(a => !isSmp(a)); DB.cheques = DB.cheques.filter(c => !isSmp(c)); DB.recurring = DB.recurring.filter(r => !isSmp(r));
+  DB.products = DB.products.filter(p => !isSmp(p)); DB.locations = DB.locations.filter(l => !isSmp(l)); DB.priceLists = DB.priceLists.filter(l => !isSmp(l)); DB.contacts.forEach(c => { if(isSmp(c.priceList)) c.priceList = ''; }); DB.assets = DB.assets.filter(a => !isSmp(a)); DB.cheques = DB.cheques.filter(c => !isSmp(c)); DB.recurring = DB.recurring.filter(r => !isSmp(r));
   DB.branches = DB.branches.filter(b => !isSmp(b)); if(isSmp(DB.settings.defaultBranch)) DB.settings.defaultBranch = '';
   if(DB.settings.sampleCur && !DB.vouchers.some(v => v.cur === DB.settings.sampleCur) && !DB.contacts.some(c => c.cur === DB.settings.sampleCur)) DB.currencies = DB.currencies.filter(c => c.code !== DB.settings.sampleCur); delete DB.settings.sampleCur;
   if(DB.settings.sampleBudget){ DB.budgets = DB.budgets.filter(b => String(b.year) !== String(DB.settings.sampleBudget)); delete DB.settings.sampleBudget; }
@@ -3490,9 +3545,9 @@ function amountWords(x){
 
 /* ---------- shared pieces ---------- */
 const docHead = (title, right = '') => { const s = DB.settings;
-  return `<div class="ih"><div><img src="${LOGO_DARK}" alt="" style="height:76px;margin-bottom:6px"><h1>${esc(s.legal || s.biz)}</h1>${s.address ? `<div>${esc(s.address).replace(/\n/g,'<br>')}</div>` : ''}${s.phone || s.email ? `<div>${esc([s.phone, s.email].filter(Boolean).join(' · '))}</div>` : ''}${s.trn ? `<div><b>TRN</b> ${esc(s.trn)}</div>` : ''}</div>
+  return `<div class="ih"><div>${s.printLogo === false ? '' : `<img src="${LOGO_DARK}" alt="" style="height:76px;margin-bottom:6px">`}<h1>${esc(s.legal || s.biz)}</h1>${s.address ? `<div>${esc(s.address).replace(/\n/g,'<br>')}</div>` : ''}${s.phone || s.email ? `<div>${esc([s.phone, s.email].filter(Boolean).join(' · '))}</div>` : ''}${s.trn ? `<div><b>TRN</b> ${esc(s.trn)}</div>` : ''}${s.printHeader ? `<div class="mini">${esc(s.printHeader)}</div>` : ''}</div>
     <div class="t"><h2>${title}</h2>${right}</div></div>`; };
-const sigs = labels => `<div class="sigs">${labels.map(l => `<div><span></span>${esc(l)}</div>`).join('')}</div>`;
+const sigs = labels => DB.settings.printSigs === false ? '' : `<div class="sigs">${labels.map(l => `<div><span></span>${esc(l)}</div>`).join('')}</div>`;
 const postingTable = v => { const L = post(v); return L.length ? `<table class="small"><thead><tr><th>Account</th><th>Details</th><th class="r">Debit</th><th class="r">Credit</th></tr></thead><tbody>
   ${L.map(l => `<tr><td>${esc(accLabel(l.acc))}</td><td>${esc(l.desc)}${l.party ? ' · ' + esc(contact(l.party)?.name || '') : ''}</td><td class="r">${fmtZ(l.dr)}</td><td class="r">${fmtZ(l.cr)}</td></tr>`).join('')}</tbody></table>` : ''; };
 const mask = iban => iban ? iban.replace(/\s+/g,'').replace(/^(.{4}).*(.{4})$/, '$1 •••• •••• $2') : '';
@@ -3738,17 +3793,27 @@ document.addEventListener('submit', ev => {
 const productById = id => DB.products.find(p => p.id === id);
 const STOCK_UNITS = ['pcs','bottle','tube','box','pack','set','ml','g','kg','litre'];
 
-/** replays every stock movement in date order: quantity, value and moving average cost per item */
+/** quantity in the item's base unit (lines can be in the alternate unit, e.g. box of 12) */
+function baseQty(it, def = 1){ const p = productById(it.product), q = it.qty === '' || it.qty == null ? def : +it.qty; return it.uom === 'alt' && p && +p.altFactor > 0 ? q * +p.altFactor : q; }
+const STOCK_IN = ['BILL','EXP','CN','GRN_'], STOCK_OUT = ['SAL','INV','DN'];
+/** replays every stock movement in date order: quantity, value and moving average cost per item,
+    quantity per location and per batch (batches without a number are used first-expiry-first-out) */
 function stockCalc(){
   return memo.stock ??= (() => {
     const P = {}, costs = {};
-    for(const p of DB.products) P[p.id] = {qty:0, val:0, avg:+p.cost || 0, moves:[]};
+    for(const p of DB.products) P[p.id] = {qty:0, val:0, avg:+p.cost || 0, moves:[], loc:{}, batches:{}};
+    const addBatch = (s, b, exp, q) => { const k = b || ''; const x = s.batches[k] ||= {batch:k, exp:exp || '', qty:0}; if(exp && !x.exp) x.exp = exp; x.qty = +(x.qty + q).toFixed(4); };
+    const takeBatches = (s, b, q) => { if(b){ addBatch(s, b, '', -q); return; } // first expiry first out, then stock without a batch
+      const list = Object.values(s.batches).filter(x => x.batch && x.qty > 0).sort((a,b2) => (a.exp || '9999') < (b2.exp || '9999') ? -1 : 1); let left = q;
+      for(const x of list){ if(left <= 0) break; const t = Math.min(left, x.qty); x.qty = +(x.qty - t).toFixed(4); left -= t; } if(left > 0) addBatch(s, '', '', -left); };
     for(const v of sortedVouchers()){
-      if(!['SAL','INV','CN','BILL','EXP','DN','ADJ'].includes(v.type) || !(v.items || []).some(it => it.product)) continue;
-      const fx = fxOf(v), rows = v.type === 'ADJ' ? null : totals(v).rows;
+      if(v.appr === 'pending' || !['SAL','INV','CN','BILL','EXP','DN','ADJ','STR'].includes(v.type) || !(v.items || []).some(it => it.product)) continue;
+      const fx = fxOf(v), rows = ['ADJ','STR'].includes(v.type) ? null : totals(v).rows;
       v.items.forEach((it, i) => {
-        const s = P[it.product]; if(!s) return; const q = +it.qty || (v.type === 'ADJ' ? 0 : 1); if(!q) return;
-        const avg = s.qty > 0.0001 ? s.val / s.qty : s.avg; let dq = 0, dv = 0;
+        const s = P[it.product]; if(!s) return; const q = baseQty(it, v.type === 'ADJ' || v.type === 'STR' ? 0 : 1); if(!q) return;
+        const avg = s.qty > 0.0001 ? s.val / s.qty : s.avg, L = it.loc || ''; let dq = 0, dv = 0;
+        if(v.type === 'STR'){ const T = it.toLoc || ''; s.loc[L] = +((s.loc[L] || 0) - q).toFixed(4); s.loc[T] = +((s.loc[T] || 0) + q).toFixed(4);
+          s.moves.push({v, date:v.date, i, dq:0, dv:0, qty:s.qty, val:s.val, avg:s.avg, loc:L, toLoc:T, tq:q}); return; }
         switch(v.type){
           case 'BILL': case 'EXP': dq = q; dv = r2(rows[i].net * fx); break;
           case 'DN': dq = -q; dv = -r2(rows[i].net * fx); break;
@@ -3757,7 +3822,9 @@ function stockCalc(){
           case 'ADJ': dq = q; dv = q > 0 ? r2(q * (+it.cost > 0 ? +it.cost : avg)) : -r2(-q * avg); costs[v.id + ':' + i] = Math.abs(dv); break;
         }
         s.qty = +(s.qty + dq).toFixed(4); s.val = r2(s.val + dv); if(s.qty > 0.0001) s.avg = s.val / s.qty;
-        s.moves.push({v, date:v.date, i, dq, dv, qty:s.qty, val:s.val, avg:s.avg});
+        s.loc[L] = +((s.loc[L] || 0) + dq).toFixed(4);
+        if(dq > 0) addBatch(s, it.batch, it.exp, dq); else takeBatches(s, it.batch, -dq);
+        s.moves.push({v, date:v.date, i, dq, dv, qty:s.qty, val:s.val, avg:s.avg, loc:L});
       });
     }
     return {P, costs};
@@ -3765,7 +3832,7 @@ function stockCalc(){
 }
 function stockAt(pid, asOf){ const s = stockCalc().P[pid]; if(!s) return {qty:0, val:0, avg:0}; let last = {qty:0, val:0, avg:+productById(pid)?.cost || 0};
   for(const m of s.moves){ if(asOf && m.date > asOf) break; last = m; } return {qty:last.qty, val:last.val, avg:last.avg}; }
-function adjPreview(v){ let t = 0; v.items.forEach(it => { const s = stockAt(it.product), q = +it.qty || 0; t += q > 0 ? q * (+it.cost > 0 ? +it.cost : s.avg) : q * s.avg; }); return r2(t); }
+function adjPreview(v){ let t = 0; v.items.forEach(it => { const s = stockAt(it.product), q = baseQty(it, 0); t += q > 0 ? q * (+it.cost > 0 ? +it.cost : s.avg) : q * s.avg; }); return r2(t); }
 const ADJ_REASONS = [['5150','Count difference, damaged or expired'], ['5000','Used in the salon'], ['3050','Opening stock']];
 function adjTable(v){
   return `<table class="items"><thead><tr><th style="width:30%">Stock item</th><th class="r" style="width:11%">On hand</th><th class="r" style="width:12%">Qty + / −</th><th class="r" style="width:14%">Unit cost (in only)</th><th>Charge to</th><th style="width:34px"></th></tr></thead><tbody>
@@ -3779,15 +3846,18 @@ function adjTable(v){
 }
 
 /* ---------- picking an item on a sales or purchase line ---------- */
+const SALE_DOCS = ['SAL','INV','CN','QUO','SO','DLN'];
+function priceFor(p, partyId){ const c = contact(partyId), pl = c?.priceList && DB.priceLists.find(x => x.id === c.priceList); const x = pl ? +(pl.prices || {})[p.id] : 0; return x > 0 ? x : +p.price || 0; }
+function fillProduct(it, keepDesc){ const p = productById(it.product); if(!p) return; const sale = SALE_DOCS.includes(F.type), qd = QTY_TYPES.includes(F.type), q = num(it.qty) || 1, f = it.uom === 'alt' && +p.altFactor > 0 ? +p.altFactor : 1;
+  it.qty = q; if(!keepDesc || !it.desc) it.desc = p.name; it.vat = DB.settings.vatOn ? (p.vat || 'SR') : 'NA'; const vr = it.vat === 'SR' ? (+DB.settings.vatRate || 5) / 100 : 0;
+  if(sale){ it.acc = p.acc || '4100'; const price = priceFor(p, F.party) * f; if(qd) it.rate = r2(price / (1 + vr)); else it.amount = r2(price * q); }
+  else { it.acc = stockAcc(); const c = (stockAt(p.id).avg || +p.cost || 0) * f; if(qd) it.rate = r2(c); else it.amount = r2(c * q * (F.incl && vr ? 1 + vr : 1)); }
+  if(!it.loc && DB.settings.defaultLoc) it.loc = DB.settings.defaultLoc; }
 Object.assign(CHANGE, {
-  product: t => { readForm(); const n = +t.dataset.n, it = F.items[n], p = productById(it.product); if(!p){ drawForm(); return; }
-    const sale = ['SAL','INV','CN'].includes(F.type), q = num(it.qty) || 1; it.qty = q; it.desc = it.desc || p.name; it.vat = DB.settings.vatOn ? (p.vat || 'SR') : 'NA';
-    if(sale){ it.acc = p.acc || '4100'; const vr = it.vat === 'SR' ? (+DB.settings.vatRate || 5) / 100 : 0;
-      if(F.type === 'SAL') it.amount = r2((+p.price || 0) * q); else it.rate = r2((+p.price || 0) / (1 + vr)); }
-    else { it.acc = stockAcc(); const avg = stockAt(p.id).avg || +p.cost || 0; it.amount = r2(avg * q * (F.incl && it.vat === 'SR' ? 1 + (+DB.settings.vatRate || 5) / 100 : 1)); }
-    drawForm(); },
+  product: t => { readForm(); const it = F.items[+t.dataset.n]; if(!productById(it.product)){ drawForm(); return; } fillProduct(it); drawForm(); },
+  uom: t => { readForm(); const it = F.items[+t.dataset.n]; fillProduct(it, true); drawForm(); },
   pqty: t => { readForm(); const n = +t.dataset.n, it = F.items[n], p = productById(it.product); if(!p) return; const q = num(it.qty) || 0;
-    if(F.type === 'SAL'){ it.amount = r2((+p.price || 0) * q); const el = $(`#vform input[name="i${n}-amount"]`); if(el){ el.value = it.amount; liveTotals(); } } }
+    if(F.type === 'SAL'){ it.amount = r2(priceFor(p, F.party) * (it.uom === 'alt' && +p.altFactor > 0 ? +p.altFactor : 1) * q); const el = $(`#vform input[name="i${n}-amount"]`); if(el){ el.value = it.amount; liveTotals(); } } }
 });
 
 /* ---------- inventory page ---------- */
@@ -3796,14 +3866,14 @@ PAGES.inventory = () => {
   const S = stockCalc(), [pf, pt] = [state.pf, state.pt], list = DB.products.slice().sort((a,b)=>a.name.localeCompare(b.name));
   const val = r2(list.reduce((t,p) => t + (S.P[p.id]?.val || 0), 0)), gl = bal(stockAcc()), low = list.filter(p => p.active !== false && +p.reorder > 0 && (S.P[p.id]?.qty || 0) <= +p.reorder);
   const cogs = bal(cogsAcc(), pt, pf);
-  const tabs = [['items','Items'],['moves','Movements'],['val','Valuation'],['margin','Sales and margin'],['low','Low stock']];
+  const tabs = [['items','Items'],['summary','Stock summary'],['moves','Movements'],['val','Valuation'],['byloc','Locations'],['batch','Batches and expiry'],['margin','Sales and margin'],['low','Reorder'],['plist','Price lists']];
   return header('Stock', 'Retail products and salon supplies you keep count of', {month:true, newAct:'editProduct', newLabel:'Item', extra:`<button class="btn ghost" data-act="newV" data-t="ADJ">Stock adjustment</button>`}) + `
   <div class="stats"><div class="stat"><p>Items</p><b class="num">${list.filter(p => p.active !== false).length}</b><small>${low.length} at or below reorder level</small></div>
     <div class="stat"><p>Stock value</p><b class="num">${fmt(val)}</b><small>Ledger 1350: ${fmt(gl)}${Math.abs(gl - val) > 0.01 ? ' <span class="out">differs</span>' : ''}</small></div>
     <div class="stat"><p>Cost of goods sold</p><b class="num">${fmt(cogs)}</b><small>${periodLabel()}</small></div>
     <div class="stat"><p>Product sales</p><b class="num">${fmt(marginRows(pf, pt).reduce((t,r)=>t+r.sales,0))}</b><small>Before VAT, ${periodLabel()}</small></div></div>
   <div class="tabs no-print" role="tablist">${tabs.map(([k,l]) => `<button role="tab" data-act="itab" data-k="${k}" aria-selected="${state.itab===k}">${l}</button>`).join('')}</div>
-  <section class="panel">${({items:stockItemsView, moves:stockMovesView, val:stockValView, margin:stockMarginView, low:stockLowView})[state.itab]()}</section>`;
+  <section class="panel">${({items:stockItemsView, summary:stockSummaryView, moves:stockMovesView, val:stockValView, byloc:stockLocView, batch:stockBatchView, margin:stockMarginView, low:stockLowView, plist:priceListView})[state.itab]()}</section>`;
 };
 function stockItemsView(){
   const S = stockCalc(), list = DB.products.slice().sort((a,b)=>a.name.localeCompare(b.name));
@@ -3833,7 +3903,7 @@ function stockValView(){
 function marginRows(from, to){
   const S = stockCalc(), m = {};
   for(const v of sortedVouchers()){ if(!['SAL','INV','CN'].includes(v.type) || (from && v.date < from) || (to && v.date > to)) continue; const fx = fxOf(v), sg = v.type === 'CN' ? -1 : 1, rows = totals(v).rows;
-    v.items.forEach((it, i) => { if(!it.product) return; const x = m[it.product] ||= {qty:0, sales:0, cogs:0}; x.qty += sg * (+it.qty || 1); x.sales = r2(x.sales + sg * rows[i].net * fx); x.cogs = r2(x.cogs + sg * (S.costs[v.id + ':' + i] || 0)); }); }
+    v.items.forEach((it, i) => { if(!it.product) return; const x = m[it.product] ||= {qty:0, sales:0, cogs:0}; x.qty += sg * baseQty(it); x.sales = r2(x.sales + sg * rows[i].net * fx); x.cogs = r2(x.cogs + sg * (S.costs[v.id + ':' + i] || 0)); }); }
   return Object.entries(m).map(([pid, x]) => ({p:productById(pid), ...x, gp:r2(x.sales - x.cogs)})).filter(x => x.p).sort((a,b)=>b.gp - a.gp);
 }
 function stockMarginView(){
@@ -3843,7 +3913,7 @@ function stockMarginView(){
     ${rows.map(r => `<tr><td>${esc(r.p.name)}</td><td class="r num">${+r.qty.toFixed(2)}</td><td class="r num">${fmt(r.sales)}</td><td class="r num">${fmt(r.cogs)}</td><td class="r num ${r.gp < 0 ? 'out' : ''}">${fmt(r.gp)}</td><td class="r">${r.sales ? (r.gp / r.sales * 100).toFixed(1) + '%' : '–'}</td></tr>`).join('')}</tbody>
     <tfoot><tr><td>Total</td><td></td><td class="r num">${fmt(T.sales)}</td><td class="r num">${fmt(T.cogs)}</td><td class="r num">${fmt(T.gp)}</td><td class="r">${T.sales ? (T.gp / T.sales * 100).toFixed(1) + '%' : '–'}</td></tr></tfoot></table></div>` : empty('No product sales', 'Pick stock items on sales lines to see their margin here.')}`;
 }
-function stockLowView(){
+function stockLowView_v1(){
   const S = stockCalc(), rows = DB.products.filter(p => p.active !== false && +p.reorder > 0 && (S.P[p.id]?.qty || 0) <= +p.reorder);
   return `<div class="panel-head"><div><h2>Low stock</h2><p>Items at or below their reorder level.</p></div><button class="btn ghost sm no-print" data-act="print">${ic('print',15)}Print</button></div>
     ${rows.length ? `<div class="tbl-wrap"><table><thead><tr><th>Item</th><th class="r">On hand</th><th class="r">Reorder at</th><th class="r">Last cost</th><th>Usual supplier</th></tr></thead><tbody>
@@ -3856,6 +3926,8 @@ function productDlg(p){
     <div class="grid4">${fld('SKU / code', inp('sku', p.sku || 'P-' + String(DB.products.length + 1).padStart(3,'0')))}${fld('Name', inp('name', p.name, 'required autofocus'), 'wide')}${fld('Unit', `<select name="unit">${STOCK_UNITS.map(u => opt(u, u, p.unit || 'pcs')).join('')}</select>`)}</div>
     <div class="grid4" style="margin-top:12px">${fld('Selling price incl. VAT', inp('price', p.price, 'type="number" step="0.01" min="0"'))}${fld('VAT', `<select name="vat">${Object.entries(VAT_CODES).map(([c,l]) => opt(c, l, p.vat || 'SR')).join('')}</select>`)}
       ${fld('Income account', `<select name="acc">${accOptions(a => a.type === 'income', p.acc || '4100')}</select>`)}${fld('Reorder at', inp('reorder', p.reorder, 'type="number" step="any" min="0"'))}</div>
+    <div class="grid4" style="margin-top:12px">${fld('Alternate unit', `<select name="altUnit">${opt('', 'None', p.altUnit || '')}${STOCK_UNITS.map(u => opt(u, u, p.altUnit || '')).join('')}</select>`)}${fld('Base units in one alternate unit', inp('altFactor', p.altFactor, 'type="number" step="any" min="0" placeholder="e.g. 12"'))}
+      ${fld('Track batches and expiry', `<select name="batches">${opt('0','No', p.batches ? '1' : '0')}${opt('1','Yes', p.batches ? '1' : '0')}</select>`)}${fld('Usual order quantity', inp('reorderQty', p.reorderQty, 'type="number" step="any" min="0"'))}</div>
     <div class="grid4" style="margin-top:12px">${fld('Standard cost (until first purchase)', inp('cost', p.cost, 'type="number" step="0.01" min="0"'))}${fld('Notes', inp('notes', p.notes), 'wide')}${fld('Status', `<select name="active">${opt('1','Active', p.active === false ? '0' : '1')}${opt('0','Inactive', p.active === false ? '0' : '1')}</select>`)}</div>
     ${!isNew && s.moves.length ? `<h3 style="font:400 20px var(--serif);margin:18px 0 6px">Movements</h3><div class="tbl-wrap" style="max-height:260px;overflow:auto"><table><thead><tr><th>Date</th><th>Entry</th><th class="r">In</th><th class="r">Out</th><th class="r">Value</th><th class="r">Balance</th><th class="r">Avg</th></tr></thead><tbody>
       ${s.moves.slice().reverse().map(m => `<tr data-act="editV" data-id="${m.v.id}"><td>${dShort(m.date)} ${m.date.slice(0,4)}</td><td>${esc(m.v.no)} <span class="mini">${esc(TYPES[m.v.type].name)}</span></td><td class="r num">${m.dq > 0 ? +m.dq.toFixed(2) : ''}</td><td class="r num">${m.dq < 0 ? +(-m.dq).toFixed(2) : ''}</td><td class="r num">${fmt(m.dv)}</td><td class="r num">${+m.qty.toFixed(2)}</td><td class="r num">${fmt(m.avg)}</td></tr>`).join('')}</tbody></table></div>` : ''}
@@ -3877,9 +3949,112 @@ document.addEventListener('submit', e => {
   if(e.target.dataset.form !== 'product') return; e.preventDefault(); if(!guardWrite()) return;
   const f = e.target, v = Object.fromEntries(new FormData(f).entries()), id = f.dataset.id, p = id ? productById(id) : {id:uid('p')};
   if(!v.name.trim()) return toast('Enter the name.');
-  Object.assign(p, {sku:v.sku.trim(), name:v.name.trim(), unit:v.unit, price:r2(num(v.price)), vat:v.vat, acc:v.acc, reorder:num(v.reorder), cost:r2(num(v.cost)), notes:v.notes.trim(), active: v.active !== '0'});
+  Object.assign(p, {sku:v.sku.trim(), name:v.name.trim(), unit:v.unit, price:r2(num(v.price)), vat:v.vat, acc:v.acc, reorder:num(v.reorder), cost:r2(num(v.cost)), notes:v.notes.trim(), active: v.active !== '0', altUnit:v.altUnit || '', altFactor:num(v.altFactor), batches: v.batches === '1', reorderQty:num(v.reorderQty)});
   if(!id) DB.products.push(p); audit(id ? 'Changed' : 'Added', null, 'Stock item ' + p.name); closeDlg(); commit(p.name + (id ? ' saved' : ' added'));
 });
+
+/* =====================================================================
+   inv2.js — stock locations, transfers, batches and expiry, alternate
+   units, price lists, stock summary and reorder suggestions
+   ===================================================================== */
+const locName = id => id ? (DB.locations.find(l => l.id === id)?.name || 'Deleted location') : (DB.settings.mainLocName || 'Main store');
+const locOptions = sel => `<option value="">${esc(DB.settings.mainLocName || 'Main store')}</option>` + DB.locations.map(l => opt(l.id, l.name, sel || '')).join('');
+
+/** extra row under a stock line: location, unit, batch and expiry */
+function stockSubRow(v, it, n, cols){
+  const p = productById(it.product); if(!p) return '';
+  const showLoc = DB.locations.length && !['QUO','SO','PO'].includes(v.type), showUom = p.altUnit && +p.altFactor > 0, showBatch = p.batches && !['QUO','SO','PO'].includes(v.type);
+  if(!showLoc && !showUom && !showBatch) return '';
+  const inward = ['BILL','EXP','CN','GRN'].includes(v.type), S = stockCalc().P[p.id];
+  const batches = S ? Object.values(S.batches).filter(b => b.batch && b.qty > 0).sort((a,b) => (a.exp||'9') < (b.exp||'9') ? -1 : 1) : [];
+  return `<tr class="subrow"><td colspan="${cols}"><div class="row-flex" style="gap:10px;align-items:center;padding:0 4px 8px">
+    ${showLoc ? `<label class="mini">Location <select name="i${n}-loc">${locOptions(it.loc)}</select></label>` : ''}
+    ${showUom ? `<label class="mini">Unit <select name="i${n}-uom" data-change="uom" data-n="${n}">${opt('', p.unit || 'unit', it.uom || '')}${opt('alt', `${p.altUnit} (${+p.altFactor} ${p.unit})`, it.uom || '')}</select></label>` : ''}
+    ${showBatch ? (inward ? `<label class="mini">Batch <input name="i${n}-batch" value="${esc(it.batch || '')}" style="width:110px"></label><label class="mini">Expiry <input type="date" name="i${n}-exp" value="${esc(it.exp || '')}"></label>`
+      : `<label class="mini">Batch <select name="i${n}-batch"><option value="">First to expire</option>${batches.map(b => opt(b.batch, `${b.batch}${b.exp ? ' · exp ' + dShort(b.exp) + ' ' + b.exp.slice(0,4) : ''} · ${+b.qty.toFixed(2)} left`, it.batch || '')).join('')}</select></label>`) : ''}
+    <span class="mini">On hand ${S ? +S.qty.toFixed(2) : 0} ${esc(p.unit || '')}${showLoc && S ? ` · here ${+(S.loc[it.loc || ''] || 0).toFixed(2)}` : ''}</span></div></td></tr>`;
+}
+function strTable(v){
+  return `<table class="items"><thead><tr><th style="width:34%">Stock item</th><th class="r" style="width:12%">Quantity</th><th>From</th><th>To</th><th style="width:34px"></th></tr></thead><tbody>
+    ${v.items.map((it, n) => { const S = it.product ? stockCalc().P[it.product] : null; return `<tr><td><select name="i${n}-product" data-change="redraw"><option value="">Choose…</option>${DB.products.filter(p => p.active !== false || p.id === it.product).map(p => opt(p.id, p.name, it.product)).join('')}</select></td>
+      <td class="r">${inp(`i${n}-qty`, it.qty, 'type="number" step="any" min="0"')}</td><td><select name="i${n}-loc">${locOptions(it.loc)}</select>${S ? `<div class="mini">${+(S.loc[it.loc || ''] || 0).toFixed(2)} there</div>` : ''}</td><td><select name="i${n}-toLoc">${locOptions(it.toLoc)}</select></td>
+      <td>${v.items.length > 1 ? `<button type="button" class="x" data-act="delItem" data-n="${n}" aria-label="Remove line">${ic('x',14)}</button>` : ''}</td></tr>`; }).join('')}</tbody></table>
+    <button type="button" class="btn ghost sm" data-act="addItem">${ic('plus',14)}Add item</button>${DB.locations.length ? '' : '<p class="help">Add locations first (Stock → Locations).</p>'}`;
+}
+
+/* ---------- reports ---------- */
+/** opening, inward, outward and closing per item for a period (Tally "Stock Summary") */
+function stockSummary(from, to){
+  const S = stockCalc();
+  return DB.products.map(p => { const s = S.P[p.id] || {moves:[]}; let oq = 0, ov = 0, iq = 0, iv = 0, xq = 0, xv = 0;
+    for(const m of s.moves){ if(m.dq === 0) continue; if(from && m.date < from){ oq = m.qty; ov = m.val; continue; } if(to && m.date > to) break; if(m.dq > 0){ iq += m.dq; iv += m.dv; } else { xq -= m.dq; xv -= m.dv; } }
+    return {p, oq, ov:r2(ov), iq, iv:r2(iv), xq, xv:r2(xv), cq:+(oq + iq - xq).toFixed(4), cv:r2(ov + iv - xv)}; }).filter(r => r.oq || r.iq || r.xq || r.cq).sort((a,b) => a.p.name.localeCompare(b.p.name));
+}
+function stockSummaryView(){
+  const rows = stockSummary(state.pf, state.pt), T = rows.reduce((t,r) => { for(const k of ['ov','iv','xv','cv']) t[k] += r[k]; return t; }, {ov:0, iv:0, xv:0, cv:0}), q = x => +(+x).toFixed(2);
+  return `<div class="panel-head"><div><h2>Stock summary, ${periodLabel()}</h2><p>Opening, inward, outward and closing quantity and value per item.</p></div><button class="btn ghost sm no-print" data-act="print">${ic('print',15)}Print</button></div>
+    ${rows.length ? `<div class="tbl-wrap"><table class="small"><thead><tr><th rowspan="2">Item</th><th class="r" colspan="2">Opening</th><th class="r" colspan="2">Inward</th><th class="r" colspan="2">Outward</th><th class="r" colspan="2">Closing</th></tr><tr><th class="r">Qty</th><th class="r">Value</th><th class="r">Qty</th><th class="r">Value</th><th class="r">Qty</th><th class="r">Value</th><th class="r">Qty</th><th class="r">Value</th></tr></thead><tbody>
+    ${rows.map(r => `<tr data-act="editProduct" data-id="${r.p.id}"><td>${esc(r.p.name)} <span class="mini">${esc(r.p.unit || '')}</span></td><td class="r num">${q(r.oq)}</td><td class="r num">${fmt(r.ov)}</td><td class="r num">${q(r.iq)}</td><td class="r num">${fmt(r.iv)}</td><td class="r num">${q(r.xq)}</td><td class="r num">${fmt(r.xv)}</td><td class="r num"><b>${q(r.cq)}</b></td><td class="r num"><b>${fmt(r.cv)}</b></td></tr>`).join('')}</tbody>
+    <tfoot><tr><td>Total</td><td></td><td class="r num">${fmt(T.ov)}</td><td></td><td class="r num">${fmt(T.iv)}</td><td></td><td class="r num">${fmt(T.xv)}</td><td></td><td class="r num">${fmt(T.cv)}</td></tr></tfoot></table></div>` : empty('No stock movement', 'Nothing moved in this period.')}`;
+}
+function stockLocView(){
+  const S = stockCalc(), locs = ['', ...DB.locations.map(l => l.id)], rows = DB.products.filter(p => S.P[p.id] && Object.values(S.P[p.id].loc).some(x => Math.abs(x) > 0.0001)).sort((a,b)=>a.name.localeCompare(b.name));
+  return `<div class="panel-head"><div><h2>Stock by location</h2><p>Quantities now, in each location. Move stock with a Stock transfer.</p></div><div class="row-btns no-print"><button class="btn ghost sm" data-act="newV" data-t="STR">Stock transfer</button><button class="btn ghost sm" data-act="editLoc">${ic('plus',14)}Location</button><button class="btn ghost sm" data-act="print">${ic('print',15)}Print</button></div></div>
+    <div class="chips" style="margin-bottom:10px">${locs.map(l => `<button ${l ? `data-act="editLoc" data-id="${l}"` : 'data-act="editLoc" data-id="__main"'}>${esc(locName(l))}</button>`).join('')}</div>
+    ${rows.length ? `<div class="tbl-wrap"><table><thead><tr><th>Item</th>${locs.map(l => `<th class="r">${esc(locName(l))}</th>`).join('')}<th class="r">Total</th></tr></thead><tbody>
+    ${rows.map(p => `<tr><td>${esc(p.name)}</td>${locs.map(l => { const x = S.P[p.id].loc[l] || 0; return `<td class="r num ${x < 0 ? 'out' : ''}">${x ? +x.toFixed(2) : '–'}</td>`; }).join('')}<td class="r num"><b>${+S.P[p.id].qty.toFixed(2)}</b></td></tr>`).join('')}</tbody></table></div>` : empty('No stock', 'Nothing on hand.')}`;
+}
+function stockBatchView(){
+  const S = stockCalc(), t = todayISO(), soon = addDays(t, 60), rows = [];
+  for(const p of DB.products){ const s = S.P[p.id]; if(!s) continue; for(const b of Object.values(s.batches)) if(b.batch && b.qty > 0.0001) rows.push({p, b}); }
+  rows.sort((a,b) => (a.b.exp || '9999') < (b.b.exp || '9999') ? -1 : 1);
+  return `<div class="panel-head"><div><h2>Batches and expiry</h2><p>Remaining quantity per batch. Sales without a batch number use the batch that expires first.</p></div><button class="btn ghost sm no-print" data-act="print">${ic('print',15)}Print</button></div>
+    ${rows.length ? `<div class="tbl-wrap"><table><thead><tr><th>Item</th><th>Batch</th><th>Expiry</th><th class="r">Quantity left</th><th class="r">Value at avg cost</th><th>Status</th></tr></thead><tbody>
+    ${rows.map(({p, b}) => `<tr><td>${esc(p.name)}</td><td>${esc(b.batch)}</td><td>${b.exp ? dLong(b.exp) : '–'}</td><td class="r num">${+b.qty.toFixed(2)} ${esc(p.unit || '')}</td><td class="r num">${fmt(b.qty * (S.P[p.id].avg || 0))}</td>
+      <td>${!b.exp ? '' : b.exp < t ? '<span class="pill overdue">Expired</span>' : b.exp <= soon ? '<span class="pill part">Expires within 60 days</span>' : '<span class="pill paid">OK</span>'}</td></tr>`).join('')}</tbody></table></div>` : empty('No batches', 'Turn on "Track batches and expiry" on an item and enter the batch on purchases.')}`;
+}
+function reorderRows(){ const S = stockCalc(); return DB.products.filter(p => p.active !== false && +p.reorder > 0 && (S.P[p.id]?.qty || 0) <= +p.reorder).map(p => { const q = S.P[p.id]?.qty || 0;
+  const lastBuy = [...(S.P[p.id]?.moves || [])].reverse().find(m => ['BILL','EXP'].includes(m.v.type)), sup = lastBuy?.v.party || '';
+  return {p, q, sup, order: Math.max(+p.reorderQty || 0, +(+p.reorder * 2 - q).toFixed(2)), cost: S.P[p.id]?.avg || +p.cost || 0}; }); }
+function stockLowView(){
+  const rows = reorderRows();
+  return `<div class="panel-head"><div><h2>Reorder suggestions</h2><p>Items at or below their reorder level, with a suggested quantity (twice the reorder level less what is on hand, at least the usual order quantity).</p></div><div class="row-btns no-print">${rows.length ? '<button class="btn sm" data-act="reorderPO">Create purchase orders</button>' : ''}<button class="btn ghost sm" data-act="print">${ic('print',15)}Print</button></div></div>
+    ${rows.length ? `<div class="tbl-wrap"><table><thead><tr><th>Item</th><th class="r">On hand</th><th class="r">Reorder at</th><th class="r">Suggested order</th><th class="r">Last cost</th><th>Usual supplier</th></tr></thead><tbody>
+    ${rows.map(r => `<tr data-act="editProduct" data-id="${r.p.id}"><td>${esc(r.p.name)}</td><td class="r num ${r.q <= 0 ? 'out' : ''}">${+r.q.toFixed(2)}</td><td class="r num">${+r.p.reorder}</td><td class="r num"><b>${r.order}</b></td><td class="r num">${fmt(r.cost)}</td><td>${esc(contact(r.sup)?.name || '–')}</td></tr>`).join('')}</tbody></table></div>` : empty('Nothing to reorder', 'Every item is above its reorder level.')}`;
+}
+function priceListView(){
+  const pls = DB.priceLists;
+  return `<div class="panel-head"><div><h2>Price lists</h2><p>Special prices for groups of customers (corporate, VIP, wholesale). Link a price list to a customer; their sales and invoices then use it. Prices include VAT.</p></div><button class="btn ghost sm" data-act="editPL">${ic('plus',14)}Price list</button></div>
+    ${pls.length ? `<div class="tbl-wrap"><table><thead><tr><th>Item</th><th class="r">Standard</th>${pls.map(l => `<th class="r"><button class="link" data-act="editPL" data-id="${l.id}">${esc(l.name)}</button></th>`).join('')}</tr></thead><tbody>
+    ${DB.products.filter(p => p.active !== false).map(p => `<tr><td>${esc(p.name)}</td><td class="r num">${fmt(p.price)}</td>${pls.map(l => `<td class="r num">${+(l.prices || {})[p.id] ? fmt(l.prices[p.id]) : '–'}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
+    <p class="mini" style="margin-top:8px">Customers: ${pls.map(l => `${esc(l.name)} – ${DB.contacts.filter(c => c.priceList === l.id).map(c => esc(c.name)).join(', ') || 'none'}`).join(' · ')}</p>` : empty('No price lists', 'Add one to give some customers different prices.')}`;
+}
+function plDlg(l){
+  return `<form class="dlg" data-form="pricelist" data-id="${l.id || ''}"><h2>${l.id ? esc(l.name) : 'New price list'}</h2><p>Leave a price blank to use the standard price.</p>
+    <div class="grid3">${fld('Name', inp('name', l.name, 'required autofocus placeholder="e.g. Corporate"'))}${fld('Apply % off standard to blanks', inp('pct', '', 'type="number" step="0.1" placeholder="optional, e.g. 10"'))}</div>
+    <table class="items" style="margin-top:10px"><thead><tr><th>Item</th><th class="r">Standard</th><th class="r" style="width:26%">Price on this list</th></tr></thead><tbody>
+    ${DB.products.filter(p => p.active !== false).map(p => `<tr><td>${esc(p.name)}</td><td class="r num">${fmt(p.price)}</td><td class="r"><input type="number" step="0.01" min="0" name="p-${p.id}" value="${+(l.prices || {})[p.id] || ''}"></td></tr>`).join('')}</tbody></table>
+    <h3 style="font:400 20px var(--serif);margin:14px 0 6px">Customers on this list</h3><div class="chips">${DB.contacts.filter(c => c.kind === 'customer').map(c => `<label class="tag" style="padding:6px 10px;cursor:pointer"><input type="checkbox" class="chk" name="c-${c.id}" ${c.priceList && c.priceList === l.id ? 'checked' : ''}> ${esc(c.name)}</label>`).join('')}</div>
+    <div class="dlg-foot" style="margin-top:18px">${l.id ? `<button type="button" class="btn danger" data-act="delPL" data-id="${l.id}">Delete</button>` : ''}<button type="button" class="btn ghost" data-act="close">Cancel</button><button class="btn" type="submit">Save</button></div></form>`;
+}
+Object.assign(ACT, {
+  editLoc: d => { if(d.id === '__main'){ const n = prompt('Name of the main location', DB.settings.mainLocName || 'Main store'); if(n){ DB.settings.mainLocName = n.trim(); commit('Saved'); } return; }
+    const l = d.id ? DB.locations.find(x => x.id === d.id) : {}; const n = prompt(l.id ? 'Rename location (empty to delete)' : 'Name of the new location (e.g. Beauty counter, Back store)', l.name || ''); if(n === null) return;
+    if(!n.trim()){ if(!l.id) return; const S = stockCalc(); if(DB.products.some(p => Math.abs(S.P[p.id]?.loc[l.id] || 0) > 0.0001)) return toast('Move the stock out of this location first.'); DB.locations = DB.locations.filter(x => x !== l); return commit('Location deleted'); }
+    if(l.id) l.name = n.trim(); else DB.locations.push({id:uid('l'), name:n.trim()}); commit('Location saved'); },
+  editPL: d => openDlg(plDlg(d.id ? DB.priceLists.find(x => x.id === d.id) : {prices:{}}), 'wide'),
+  delPL: d => { if(!confirmBox('Delete this price list?')) return; DB.priceLists = DB.priceLists.filter(x => x.id !== d.id); DB.contacts.forEach(c => { if(c.priceList === d.id) c.priceList = ''; }); closeDlg(); commit('Price list deleted'); },
+  reorderPO: () => { if(!guardWrite()) return; const rows = reorderRows(), by = {}; rows.forEach(r => (by[r.sup || ''] ||= []).push(r)); let n = 0, first = null;
+    for(const [sup, rs] of Object.entries(by)){ const v = newVoucher('PO', {party:sup}); v.items = rs.map(r => ({acc:stockAcc(), desc:r.p.name, product:r.p.id, qty:r.order, rate:r2(r.cost), vat: DB.settings.vatOn ? (r.p.vat || 'SR') : 'NA'}));
+      if(!sup){ first = v; continue; } const now = new Date().toISOString(); Object.assign(v, cleanVoucher(v), {id:uid('v'), no:nextNo('PO'), created:now, updated:now, status:'Open'}); DB.vouchers.push(v); audit('Added', v, 'From reorder suggestions'); n++; }
+    commit(n ? `${n} purchase order${n > 1 ? 's' : ''} created – see Orders` : ''); if(first){ openVoucher(first); toast('Choose the supplier for the items with no usual supplier.'); } }
+});
+document.addEventListener('submit', e => { if(e.target.dataset.form !== 'pricelist') return; e.preventDefault(); if(!guardWrite()) return;
+  const f = e.target, v = Object.fromEntries(new FormData(f).entries()), id = f.dataset.id, l = id ? DB.priceLists.find(x => x.id === id) : {id:uid('pl'), prices:{}};
+  if(!v.name.trim()) return toast('Enter the name.'); const pct = num(v.pct); l.name = v.name.trim(); l.prices = {};
+  for(const p of DB.products){ let x = num(v['p-' + p.id]); if(!x && pct) x = r2(+p.price * (1 - pct / 100)); if(x > 0) l.prices[p.id] = r2(x); }
+  if(!id) DB.priceLists.push(l); DB.contacts.forEach(c => { if(c.kind !== 'customer') return; const on = !!f.elements['c-' + c.id]?.checked; if(on) c.priceList = l.id; else if(c.priceList === l.id) c.priceList = ''; });
+  closeDlg(); commit('Price list saved'); });
 
 /* =====================================================================
    branch.js — branches / cost centres and foreign currencies
@@ -4242,6 +4417,7 @@ function chqDlg(c){
     ${(c.history||[]).length ? `<p class="mini" style="margin-top:10px">${c.history.map(h => `${dLong(h.date)}: ${esc(h.what)}`).join(' · ')}</p>` : ''}
     <div class="dlg-foot" style="margin-top:18px">${!isNew && c.status === 'Pending' ? `<button type="button" class="btn danger" data-act="cancelChq" data-id="${c.id}">Cancel cheque</button>` : ''}
       ${!isNew && c.status === 'Cleared' ? `<button type="button" class="btn danger" data-act="bounceChq" data-id="${c.id}">Bounced</button>` : ''}${!isNew && ['Pending','Deposited'].includes(c.status) ? `<button type="button" class="btn danger" data-act="bounceChq" data-id="${c.id}">Bounced</button>` : ''}
+      ${!isNew && c.kind === 'issued' ? `<button type="button" class="btn ghost" data-act="printChqReg" data-id="${c.id}">Print cheque</button>` : ''}
       ${!isNew && c.status === 'Pending' && c.kind === 'received' ? `<button type="button" class="btn ghost" data-act="depositChq" data-id="${c.id}">Mark deposited</button>` : ''}
       ${!isNew && ['Pending','Deposited'].includes(c.status) ? `<button type="button" class="btn ghost" data-act="clearChq" data-id="${c.id}">Cleared</button>` : ''}
       <button type="button" class="btn ghost" data-act="close">Close</button>${locked ? '' : '<button class="btn" type="submit">Save</button>'}</div></form>`;
@@ -4521,25 +4697,619 @@ function extSheets(wb){
 }
 
 /* =====================================================================
+   orders.js — quotations, sales orders, delivery notes, purchase orders,
+   goods received notes; conversion to invoices and bills; pending reports
+   Order documents do not post to the accounts or move stock.
+   ===================================================================== */
+const ORDER_FLOW = {QUO:['SO','INV'], SO:['DLN','INV'], DLN:['INV'], PO:['GRN','BILL'], GRN:['BILL']};
+/** quantity done on each line of an order: by the documents of the given types that point to it */
+function lineDone(o, types){
+  const out = o.items.map(() => 0);
+  for(const v of DB.vouchers){ if(!types.includes(v.type) || v.link !== o.id) continue;
+    v.items.forEach(it => { if(it.src === undefined || it.src === null || out[it.src] === undefined) return; const src = o.items[it.src];
+      const q = it.qty !== undefined && it.qty !== '' ? +it.qty : (+src.rate ? (+it.amount || 0) / +src.rate : 0); out[it.src] = +(out[it.src] + q).toFixed(4); }); }
+  return out;
+}
+const invoicedBy = o => o.type === 'QUO' ? ['SO','INV'] : ['SO','DLN'].includes(o.type) ? ['INV'] : ['BILL'];
+const deliveredBy = o => o.type === 'SO' ? ['DLN'] : o.type === 'PO' ? ['GRN'] : [];
+function orderStatus(o){
+  if(o.status === 'Cancelled' || o.status === 'Closed') return o.status;
+  const done = lineDone(o, invoicedBy(o)), full = o.items.every((it, i) => done[i] >= (+it.qty || 0) - 0.0001), any = done.some(x => x > 0);
+  if(o.type === 'QUO') return any ? 'Accepted' : o.due && o.due < todayISO() ? 'Expired' : 'Open';
+  if(['DLN','GRN'].includes(o.type)){ const ord = o.link ? vById(o.link) : null, word = o.type === 'DLN' ? 'invoiced' : 'billed';
+    if(ord){ // a note on an order is done when the order lines it delivered have been invoiced / billed
+      const billed = lineDone(ord, invoicedBy(ord)), notes = DB.vouchers.filter(v => v.type === o.type && v.link === ord.id).sort((a,b) => a.date < b.date ? -1 : a.date > b.date ? 1 : (a.no < b.no ? -1 : 1));
+      const cum = {}; let mine = null; for(const n of notes){ n.items.forEach(it => { cum[it.src] = (cum[it.src] || 0) + (+it.qty || 0); }); if(n.id === o.id){ mine = {...cum}; break; } }
+      const ok = o.items.every(it => billed[it.src] >= (mine?.[it.src] || 0) - 0.0001), some = o.items.some(it => billed[it.src] > (mine?.[it.src] || 0) - (+it.qty || 0) + 0.0001);
+      return ok ? word[0].toUpperCase() + word.slice(1) : some ? 'Part done' : 'Not yet ' + word; }
+    return full ? word[0].toUpperCase() + word.slice(1) : any ? 'Part done' : 'Not yet ' + word; }
+  return full ? 'Completed' : any ? 'Part done' : 'Open';
+}
+function orderProgress(o){
+  const inv = lineDone(o, invoicedBy(o)), del = deliveredBy(o).length ? lineDone(o, deliveredBy(o)) : null;
+  const linked = DB.vouchers.filter(v => v.link === o.id);
+  return `<details class="post" open><summary>Progress: ${esc(orderStatus(o))}</summary><table><thead><tr><th>Line</th><th class="r">Ordered</th>${del ? `<th class="r">${o.type === 'SO' ? 'Delivered' : 'Received'}</th>` : ''}<th class="r">${o.type === 'QUO' ? 'Converted' : ['PO','GRN'].includes(o.type) ? 'Billed' : 'Invoiced'}</th><th class="r">Pending</th></tr></thead><tbody>
+    ${o.items.map((it, i) => `<tr><td>${esc(it.desc || accName(it.acc))}</td><td class="r num">${+it.qty || 0}</td>${del ? `<td class="r num">${+del[i].toFixed(2)}</td>` : ''}<td class="r num">${+inv[i].toFixed(2)}</td><td class="r num">${+Math.max(0, (+it.qty || 0) - inv[i]).toFixed(2)}</td></tr>`).join('')}</tbody></table>
+    ${linked.length ? `<p class="mini">Linked: ${linked.map(v => `<button type="button" class="link" data-act="editV" data-id="${v.id}">${esc(v.no)}</button>`).join(', ')}</p>` : ''}</details>`;
+}
+/** a new document from an order or note, for the quantities still pending */
+function newFrom(src, type){
+  const v = newVoucher(type, {party:src.party}); v.party = src.party; v.ref = src.no; v.memo = src.memo && ['QUO','SO','PO'].includes(type) ? src.memo : '';
+  // a delivery note or GRN that belongs to an order: the invoice or bill points to the order lines
+  const base = ['DLN','GRN'].includes(src.type) && src.link ? vById(src.link) : null;
+  const target = base || src, done = lineDone(target, ['DLN','GRN'].includes(type) ? deliveredBy(target) : invoicedBy(target));
+  v.link = target.id; if(v.cur === undefined && src.cur){ v.cur = src.cur; v.fx = src.fx; } if(src.branch) v.branch = src.branch;
+  v.items = (base ? src.items.map(it => ({...it, src: it.src})) : src.items.map((it, i) => ({...it, src:i}))).map(it => {
+    const o = target.items[it.src] || it, pend = Math.max(0, (+o.qty || 0) - done[it.src] ), q = base ? Math.min(+it.qty || 0, pend) : pend;
+    const line = {acc:it.acc, desc:it.desc, qty:+q.toFixed(4), vat:it.vat, ...(it.vr !== undefined ? {vr:it.vr} : {}), ...(it.staff ? {staff:it.staff} : {}), ...(it.product ? {product:it.product} : {}), ...(it.uom ? {uom:it.uom} : {}), ...(it.loc ? {loc:it.loc} : {}), ...(it.batch ? {batch:it.batch, exp:it.exp} : {}), src:it.src};
+    if(type === 'BILL'){ line.amount = r2(q * (+o.rate || 0)); } else line.rate = +o.rate || 0;
+    return line; }).filter(l => l.qty > 0.0001);
+  if(type === 'BILL') v.incl = false;
+  if(!v.items.length){ toast('Nothing is pending on ' + src.no + '.'); return null; }
+  return v;
+}
+function orderHTML(v){
+  const s = DB.settings, c = contact(v.party) || {}, t = totals(v), noPrice = ['DLN','GRN'].includes(v.type), cur = v.cur || s.cur;
+  const T = {QUO:'QUOTATION', SO:'SALES ORDER', DLN:'DELIVERY NOTE', PO:'PURCHASE ORDER', GRN:'GOODS RECEIVED NOTE'}[v.type], sale = ['QUO','SO','DLN'].includes(v.type);
+  return `<div class="inv">${docHead(T, `<div><b>${esc(v.no)}</b></div><div>Date: ${dLong(v.date)}</div>${v.due ? `<div>${({QUO:'Valid until', SO:'Deliver by', DLN:'Delivered', PO:'Expected by', GRN:'Received'})[v.type]}: ${dLong(v.due)}</div>` : ''}${v.ref ? `<div>Ref: ${esc(v.ref)}</div>` : ''}`)}
+    <div class="doc-meta"><div class="party"><b>${sale ? (v.type === 'DLN' ? 'Deliver to' : 'Customer') : 'Supplier'}</b><br>${esc(c.name || '')}${c.address ? '<br>' + esc(c.address).replace(/\n/g,'<br>') : ''}${c.trn ? '<br>TRN ' + esc(c.trn) : ''}${c.phone ? '<br>' + esc(c.phone) : ''}</div></div>
+    <table><thead><tr><th>#</th><th>Description</th><th class="r">Qty</th>${noPrice ? '<th>Unit</th>' : `<th class="r">Rate</th>${t.tax ? '<th class="r">VAT</th>' : ''}<th class="r">Amount ${esc(cur)}</th>`}</tr></thead><tbody>
+    ${t.rows.map((r, i) => { const p = productById(r.it.product); return `<tr><td>${i + 1}</td><td>${esc(r.it.desc || accName(r.it.acc))}${r.it.batch ? ` <span class="mini">batch ${esc(r.it.batch)}</span>` : ''}</td><td class="r">${+r.it.qty}</td>${noPrice ? `<td>${esc(r.it.uom === 'alt' ? p?.altUnit || '' : p?.unit || '')}</td>` : `<td class="r">${fmt(r.it.rate)}</td>${t.tax ? `<td class="r">${fmt(r.tax)}</td>` : ''}<td class="r">${fmt(r.gross)}</td>`}</tr>`; }).join('')}</tbody></table>
+    ${noPrice ? '' : `<div class="tt"><div><span>Net</span><span>${fmt(t.net)}</span></div>${t.tax ? `<div><span>VAT</span><span>${fmt(t.tax)}</span></div>` : ''}<div class="g"><span>Total ${esc(cur)}</span><span>${fmt(t.total)}</span></div></div><p class="words">${esc(amountWords(t.total))}</p>`}
+    ${v.memo ? `<p class="lead">${esc(v.memo).replace(/\n/g,'<br>')}</p>` : ''}
+    ${sigs(noPrice ? (v.type === 'DLN' ? ['Delivered by','Received by (name, signature, date)'] : ['Received by','Checked by']) : v.type === 'PO' ? ['Prepared by','Approved by'] : ['For ' + (s.legal || s.biz), 'Customer acceptance'])}</div>`;
+}
+
+/* ---------- orders page ---------- */
+state.otab = 'SO';
+PAGES.orders = () => {
+  const tabs = [['QUO','Quotations'],['SO','Sales orders'],['DLN','Delivery notes'],['PO','Purchase orders'],['GRN','Goods received'],['pendS','Pending sales'],['pendP','Pending purchases']];
+  const t = state.otab, [pf, pt] = [state.pf, state.pt];
+  const openSO = DB.vouchers.filter(v => v.type === 'SO' && ['Open','Part done'].includes(orderStatus(v))), openPO = DB.vouchers.filter(v => v.type === 'PO' && ['Open','Part done'].includes(orderStatus(v)));
+  const pendVal = (list) => r2(list.reduce((s,o) => { const d = lineDone(o, invoicedBy(o)); return s + o.items.reduce((x, it, i) => x + Math.max(0, (+it.qty||0) - d[i]) * (+it.rate||0) * fxOf(o), 0); }, 0));
+  let body;
+  if(t === 'pendS' || t === 'pendP'){ const types = t === 'pendS' ? ['SO'] : ['PO'], rows = [];
+    for(const o of DB.vouchers.filter(v => types.includes(v.type) && ['Open','Part done'].includes(orderStatus(v)))){ const d = lineDone(o, invoicedBy(o)), del = lineDone(o, deliveredBy(o));
+      o.items.forEach((it, i) => { const p = Math.max(0, (+it.qty||0) - d[i]); if(p > 0.0001) rows.push({o, it, ord:+it.qty||0, del:del[i], inv:d[i], p, val:r2(p * (+it.rate||0) * fxOf(o))}); }); }
+    rows.sort((a,b) => (a.o.due || a.o.date) < (b.o.due || b.o.date) ? -1 : 1);
+    body = `<div class="panel-head"><div><h2>${t === 'pendS' ? 'Sales orders not yet invoiced' : 'Purchase orders not yet billed'}</h2><p>Line by line, oldest due first.</p></div><button class="btn ghost sm no-print" data-act="print">${ic('print',15)}Print</button></div>
+      ${rows.length ? `<div class="tbl-wrap"><table><thead><tr><th>Order</th><th>Due</th><th>${t === 'pendS' ? 'Customer' : 'Supplier'}</th><th>Item</th><th class="r">Ordered</th><th class="r">${t === 'pendS' ? 'Delivered' : 'Received'}</th><th class="r">${t === 'pendS' ? 'Invoiced' : 'Billed'}</th><th class="r">Pending</th><th class="r">Value</th></tr></thead><tbody>
+      ${rows.map(r => `<tr data-act="editV" data-id="${r.o.id}"><td>${esc(r.o.no)}</td><td>${r.o.due ? dShort(r.o.due) : ''}${r.o.due && r.o.due < todayISO() ? ' <span class="pill overdue">Late</span>' : ''}</td><td>${esc(contactName(r.o))}</td><td>${esc(r.it.desc)}</td><td class="r num">${r.ord}</td><td class="r num">${+r.del.toFixed(2)}</td><td class="r num">${+r.inv.toFixed(2)}</td><td class="r num"><b>${+r.p.toFixed(2)}</b></td><td class="r num">${fmt(r.val)}</td></tr>`).join('')}</tbody>
+      <tfoot><tr><td colspan="8">Total pending</td><td class="r num">${fmt(rows.reduce((s,r)=>s+r.val,0))}</td></tr></tfoot></table></div>` : empty('Nothing pending', 'Every order is fully done.')}`; }
+  else { const list = sortedVouchers().filter(v => v.type === t && v.date >= (pf || '') && v.date <= (pt || '9999')).reverse(), sale = ['QUO','SO','DLN'].includes(t);
+    body = `<div class="panel-head"><div><h2>${esc(tabs.find(x => x[0] === t)[1])}, ${periodLabel()}</h2><p>${list.length} shown. Click one to open, print or convert it.</p></div><div class="row-btns no-print"><button class="btn sm" data-act="newV" data-t="${t}">${ic('plus',14)}New</button><button class="btn ghost sm" data-act="print">${ic('print',15)}Print</button></div></div>
+      ${list.length ? `<div class="tbl-wrap"><table><thead><tr><th>No.</th><th>Date</th><th>${sale ? 'Customer' : 'Supplier'}</th><th>${({QUO:'Valid until', SO:'Deliver by', DLN:'Delivered', PO:'Expected', GRN:'Received'})[t]}</th><th>Ref</th><th class="r">Total</th><th>Status</th></tr></thead><tbody>
+      ${list.map(v => { const st = orderStatus(v); return `<tr data-act="editV" data-id="${v.id}"><td>${esc(v.no)}</td><td>${dShort(v.date)}</td><td>${esc(contactName(v))}</td><td>${v.due ? dShort(v.due) : ''}</td><td class="mini">${esc(v.ref)}</td><td class="r num">${v.cur ? esc(v.cur) + ' ' : ''}${fmt(docTotal(v))}</td><td>${pill(({Completed:'Paid', Invoiced:'Paid', Billed:'Paid', Accepted:'Paid', 'Part done':'Part paid', Expired:'Overdue', Cancelled:'Cancelled'})[st] ? st : st)}</td></tr>`; }).join('')}</tbody></table></div>`
+        : empty('None yet', ({QUO:'Send a price offer to a customer; convert it to an order or invoice when they accept.', SO:'Record what a customer ordered, then deliver and invoice it, in full or in parts.', DLN:'Create delivery notes from sales orders.', PO:'Order from suppliers, or create orders from Stock → Reorder.', GRN:'Record goods received against purchase orders.'})[t])}`; }
+  return header('Orders', 'Quotations, sales and purchase orders, deliveries and goods received', {month:true, noNew:true, extra:`<button class="btn ghost" data-act="newV" data-t="QUO">Quotation</button><button class="btn ghost" data-act="newV" data-t="SO">Sales order</button><button class="btn" data-act="newV" data-t="PO">${ic('plus',16)}Purchase order</button>`}) + `
+  <div class="stats"><div class="stat"><p>Open sales orders</p><b class="num">${openSO.length}</b><small>${fmt(pendVal(openSO))} to invoice</small></div><div class="stat"><p>Open purchase orders</p><b class="num">${openPO.length}</b><small>${fmt(pendVal(openPO))} to be billed</small></div>
+    <div class="stat"><p>Open quotations</p><b class="num">${DB.vouchers.filter(v => v.type === 'QUO' && orderStatus(v) === 'Open').length}</b><small>${DB.vouchers.filter(v => v.type === 'QUO' && orderStatus(v) === 'Accepted').length} accepted</small></div>
+    <div class="stat"><p>Late orders</p><b class="num out">${[...openSO, ...openPO].filter(o => o.due && o.due < todayISO()).length}</b><small>Past the due date</small></div></div>
+  <div class="tabs no-print" role="tablist">${tabs.map(([k,l]) => `<button role="tab" data-act="otab" data-k="${k}" aria-selected="${t===k}">${l}</button>`).join('')}</div><section class="panel">${body}</section>`;
+};
+Object.assign(ACT, {
+  otab: d => { state.otab = d.k; render(); },
+  convert: d => { const src = vById(d.id); if(!src) return; const v = newFrom(src, d.t); if(v) openVoucher(v); },
+  orderStatus: d => { if(!guardWrite()) return; const v = vById(d.id); v.status = d.s === 'reopen' ? '' : d.s; audit('Changed', v, 'Status ' + (v.status || 'reopened')); closeDlg(); commit(`${v.no} ${v.status ? v.status.toLowerCase() : 'reopened'}`); }
+});
+/** footer buttons on order documents */
+function orderButtons(v){
+  if(!v.id || !ORDER_FLOW[v.type]) return ''; const st = orderStatus(v), closed = ['Cancelled','Closed'].includes(v.status);
+  return (closed ? '' : ORDER_FLOW[v.type].map(t => `<button type="button" class="btn ghost" data-act="convert" data-id="${v.id}" data-t="${t}">${({SO:'To sales order', INV:'To invoice', DLN:'Delivery note', GRN:'Goods received', BILL:'To bill'})[t]}</button>`).join(''))
+    + (['SO','PO','QUO'].includes(v.type) ? (closed ? `<button type="button" class="btn ghost" data-act="orderStatus" data-id="${v.id}" data-s="reopen">Reopen</button>` : `<button type="button" class="btn ghost" data-act="orderStatus" data-id="${v.id}" data-s="${st === 'Open' ? 'Cancelled' : 'Closed'}">${st === 'Open' ? 'Cancel' : 'Close'}</button>`) : '');
+}
+
+/* =====================================================================
+   p1.js — keyboard-first entry (Tally-style keys), Go to, Day Book,
+   cash flow statement, ratio analysis and exception reports
+   ===================================================================== */
+const KEYS = [['F4','Contra / transfer','TRF'],['F5','Payment (expense)','EXP'],['F6','Receipt','RCPT'],['F7','Journal','JV'],['F8','Sales invoice','INV'],['Ctrl+F8','Credit note','CN'],['F9','Purchase (bill)','BILL'],['Ctrl+F9','Debit note','DN'],
+  ['F10','Sales cash','SAL'],['Alt+F7','Stock adjustment','ADJ'],['Alt+F8','Sales order','SO'],['Alt+F9','Purchase order','PO']];
+document.addEventListener('keydown', e => {
+  const k = (e.ctrlKey ? 'Ctrl+' : '') + (e.altKey ? 'Alt+' : '') + e.key, open = dlg().open;
+  if(/^F\d+$/.test(e.key) || /F\d+$/.test(k)){ const hit = KEYS.find(x => x[0] === k); if(hit && !open && !$('#loginBox')){ e.preventDefault(); if(typeof canPost === 'function' && !canPost(hit[2], false)) return toast('Your user cannot add that entry.'); ACT.newV({t:hit[2]}); return; }
+    if(e.key === 'F5' || e.key === 'F7') e.preventDefault(); }
+  if((e.ctrlKey || e.altKey) && e.key.toLowerCase() === 'g' && !$('#loginBox')){ e.preventDefault(); gotoOpen(); return; }
+  if(e.ctrlKey && e.key === '/'){ e.preventDefault(); ACT.keysHelp(); return; }
+  // inside an entry form: Enter goes to the next field, Ctrl+Enter or Ctrl+A saves (as in Tally)
+  const f = e.target.closest && e.target.closest('form.dlg');
+  if(f && open){
+    if((e.ctrlKey && (e.key === 'Enter' || e.key.toLowerCase() === 'a')) && !['TEXTAREA'].includes(e.target.tagName)){ e.preventDefault(); f.requestSubmit(); return; }
+    if(e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && ['INPUT','SELECT'].includes(e.target.tagName) && !['checkbox','radio','submit','button'].includes(e.target.type)){
+      e.preventDefault(); const els = [...f.querySelectorAll('input:not([type=hidden]):not([readonly]):not([disabled]),select:not([disabled]),textarea')].filter(x => x.offsetParent !== null);
+      const i = els.indexOf(e.target); if(i >= 0 && i < els.length - 1){ els[i + 1].focus(); els[i + 1].select?.(); } else f.querySelector('button[type=submit]')?.focus(); }
+  }
+}, true);
+
+/* ---------- Go to (Ctrl+G / Alt+G) ---------- */
+function gotoItems(){
+  const out = [];
+  NAV.flatMap(g => g[1]).forEach(([v, l]) => { if(typeof canView !== 'function' || canView(v)) out.push({l, k:'Page', a:() => ACT.go({v})}); });
+  RTABS.forEach(([k, l]) => out.push({l, k:'Report', a:() => { state.rtab = k; ACT.go({v:'reports'}); }}));
+  Object.entries(TYPES).forEach(([t, x]) => out.push({l:'New ' + x.name.toLowerCase(), k:'Create', a:() => ACT.newV({t})}));
+  DB.accounts.forEach(a => out.push({l:a.code + ' ' + a.name, k:'Ledger', a:() => { state.glAcc = a.code; state.rtab = 'gl'; ACT.go({v:'reports'}); }}));
+  DB.contacts.forEach(c => out.push({l:c.name, k:c.kind === 'customer' ? 'Customer' : 'Supplier', a:() => { ACT.go({v:c.kind === 'customer' ? 'customers' : 'suppliers'}); ACT.editContact({id:c.id}); }}));
+  DB.products.forEach(p => out.push({l:p.name, k:'Stock item', a:() => { ACT.go({v:'inventory'}); ACT.editProduct({id:p.id}); }}));
+  DB.employees.forEach(e => out.push({l:e.name, k:'Employee', a:() => { ACT.go({v:'employees'}); ACT.editEmp({id:e.id}); }}));
+  return out;
+}
+let GOTO = {q:'', i:0, list:[]};
+function gotoOpen(){ GOTO = {q:'', i:0, list:gotoItems()}; openDlg(`<div class="dlg goto"><h2>Go to</h2><input id="gotoQ" placeholder="Type a page, report, ledger, customer, item or 'new invoice'…" autocomplete="off"><div id="gotoL"></div><p class="mini" style="margin-top:8px">↑ ↓ to move, Enter to open, Esc to close. Ctrl+/ shows all keys.</p></div>`, 'mid'); gotoDraw(); setTimeout(() => $('#gotoQ')?.focus(), 30); }
+function gotoMatches(){ const q = GOTO.q.toLowerCase().trim(), words = q.split(/\s+/).filter(Boolean); return (q ? GOTO.list.filter(x => words.every(w => (x.l + ' ' + x.k).toLowerCase().includes(w))) : GOTO.list.filter(x => x.k === 'Page' || x.k === 'Create')).slice(0, 12); }
+function gotoDraw(){ const m = gotoMatches(); if(GOTO.i >= m.length) GOTO.i = Math.max(0, m.length - 1); const el = $('#gotoL'); if(el) el.innerHTML = m.map((x, i) => `<button class="goto-row ${i === GOTO.i ? 'on' : ''}" data-act="gotoPick" data-i="${i}"><span>${esc(x.l)}</span><small>${esc(x.k)}</small></button>`).join('') || '<p class="mini">Nothing matches.</p>'; }
+document.addEventListener('input', e => { if(e.target.id === 'gotoQ'){ GOTO.q = e.target.value; GOTO.i = 0; gotoDraw(); } });
+document.addEventListener('keydown', e => { if(e.target.id !== 'gotoQ') return; const m = gotoMatches();
+  if(e.key === 'ArrowDown'){ e.preventDefault(); GOTO.i = Math.min(m.length - 1, GOTO.i + 1); gotoDraw(); } if(e.key === 'ArrowUp'){ e.preventDefault(); GOTO.i = Math.max(0, GOTO.i - 1); gotoDraw(); }
+  if(e.key === 'Enter'){ e.preventDefault(); e.stopPropagation(); const x = m[GOTO.i]; if(x){ closeDlg(); x.a(); } } }, true);
+Object.assign(ACT, {
+  gotoPick: d => { const x = gotoMatches()[+d.i]; if(x){ closeDlg(); x.a(); } },
+  gotoOpen: () => gotoOpen(),
+  keysHelp: () => openDlg(`<div class="dlg"><h2>Keyboard</h2><p>Works anywhere in the app. On entry forms, Enter moves to the next field and Ctrl+Enter (or Ctrl+A) saves.</p>
+    <table class="small"><tbody>${[...KEYS.map(([k,l]) => [k, 'New ' + l.toLowerCase()]), ['Ctrl+G / Alt+G','Go to any page, report, ledger, customer or item'], ['Alt+N','New entry menu'], ['Ctrl+S','Save now'], ['Enter','Next field (on forms)'], ['Ctrl+Enter / Ctrl+A','Save the form'], ['Esc','Close the form'], ['Ctrl+/','This list']].map(([k,l]) => `<tr><td><kbd>${k}</kbd></td><td>${l}</td></tr>`).join('')}</tbody></table>
+    <div class="dlg-foot" style="margin-top:16px"><button class="btn" data-act="close">Close</button></div></div>`, 'mid')
+});
+
+/* ---------- Day Book ---------- */
+state.dbDetail = false;
+function repDayBook(){
+  const {from, to} = state, list = sortedVouchers().filter(v => v.date >= from && v.date <= to && !NONPOST.includes(v.type) && v.appr !== 'pending');
+  let dr = 0, cr = 0;
+  const rows = list.map(v => { const L = post(v), d = r2(L.reduce((s,l)=>s+l.dr,0)), c = r2(L.reduce((s,l)=>s+l.cr,0)); dr += d; cr += c;
+    const party = contactName(v) || v.pname || '', first = L.find(l => ['ar','ap'].includes(acc(l.acc)?.role)) || L[0];
+    return `<tr data-act="editV" data-id="${v.id}"><td>${dShort(v.date)}</td><td>${esc(v.no)}</td><td><span class="pill type">${esc(TYPES[v.type].name)}</span></td><td>${esc(party || (first ? accName(first.acc) : ''))}${v.memo ? ` <span class="mini">${esc(v.memo)}</span>` : ''}</td><td class="r num">${fmt(d)}</td><td class="r num">${fmt(c)}</td></tr>`
+      + (state.dbDetail ? L.map(l => `<tr class="mini"><td></td><td></td><td></td><td style="padding-left:28px">${esc(accLabel(l.acc))}${l.party ? ' · ' + esc(contact(l.party)?.name || '') : ''}</td><td class="r num">${fmtZ(l.dr)}</td><td class="r num">${fmtZ(l.cr)}</td></tr>`).join('') : ''); }).join('');
+  return pTitle('Day Book', `${dLong(from)} to ${dLong(to)} · ${list.length} entries`) + `<div class="chips no-print" style="margin-bottom:10px"><button data-act="dbDetail" aria-pressed="${!state.dbDetail}">Condensed</button><button data-act="dbDetail" aria-pressed="${state.dbDetail}">With accounts</button></div>
+    <div class="tbl-wrap"><table><thead><tr><th>Date</th><th>Entry</th><th>Type</th><th>Particulars</th><th class="r">Debit</th><th class="r">Credit</th></tr></thead><tbody>${rows || '<tr><td colspan="6" class="mut">No entries.</td></tr>'}</tbody>
+    <tfoot><tr><td colspan="4">Total</td><td class="r num">${fmt(dr)}</td><td class="r num">${fmt(cr)}</td></tr></tfoot></table></div>`;
+}
+ACT.dbDetail = () => { state.dbDetail = !state.dbDetail; render(); };
+
+/* ---------- cash flow statement (indirect method) ---------- */
+function cashFlow(from, to){
+  const before = addDays(from, -1), mv = code => r2(bal(code, to) - bal(code, before)), isCash = a => a.role === 'cash' || a.role === 'bank';
+  const np = profit(from, to), op = [], inv = [], fin = [];
+  for(const a of DB.accounts){ if(isCash(a) || a.type === 'income' || a.type === 'expense') continue; const m = mv(a.code); if(Math.abs(m) < 0.005) continue;
+    // cash effect: an asset going up uses cash, a liability or equity going up brings cash in
+    const eff = a.type === 'asset' ? -m : m, row = {a, eff};
+    if(a.code === '1590') op.push({...row, label:'Depreciation (not a cash cost)'});
+    else if(a.type === 'asset' && /^15/.test(a.code)) inv.push({...row, label:(eff < 0 ? 'Bought: ' : 'Sold: ') + a.name});
+    else if(a.type === 'equity') fin.push({...row, label:a.name});
+    else op.push({...row, label:(a.type === 'asset' ? (eff < 0 ? 'Increase in ' : 'Decrease in ') : (eff > 0 ? 'Increase in ' : 'Decrease in ')) + a.name}); }
+  const sum = xs => r2(xs.reduce((s,x)=>s+x.eff,0)), cashAccs = DB.accounts.filter(isCash);
+  const open = r2(cashAccs.reduce((s,a)=>s+bal(a.code, before),0)), close = r2(cashAccs.reduce((s,a)=>s+bal(a.code, to),0));
+  const o = r2(np + sum(op)), i = sum(inv), f = sum(fin);
+  return {np, op, inv, fin, o, i, f, open, close, net:r2(o + i + f), diff:r2(close - open - (o + i + f))};
+}
+function repCF(){
+  const c = cashFlow(state.from, state.to), row = (l, v, cls = 'sub') => `<div class="rrow ${cls}"><span>${l}</span><span class="num">${fmt(v)}</span></div>`;
+  return pTitle('Cash flow statement', `${dLong(state.from)} to ${dLong(state.to)} · indirect method`) + `
+    <h3>Operating activities</h3>${row('Net profit for the period', c.np)}${c.op.map(x => row(esc(x.label), x.eff)).join('')}${row('Cash from operating activities', c.o, 'tot')}
+    <h3>Investing activities</h3>${c.inv.map(x => row(esc(x.label), x.eff)).join('') || '<p class="mini">None.</p>'}${row('Cash from investing activities', c.i, 'tot')}
+    <h3>Financing activities</h3>${c.fin.map(x => row(esc(x.label), x.eff)).join('') || '<p class="mini">None.</p>'}${row('Cash from financing activities', c.f, 'tot')}
+    ${row('Net change in cash and bank', c.net, 'key')}${row('Cash and bank at the start', c.open)}${row('Cash and bank at the end', c.close, 'tot')}
+    <p class="mini" style="margin-top:8px">${Math.abs(c.diff) < 0.01 ? 'Agrees with the cash and bank balances.' : `<b class="out">Does not agree by ${fmt(c.diff)}.</b>`}</p>`;
+}
+
+/* ---------- ratio analysis ---------- */
+function ratioData(from, to){
+  const sumT = (type, f) => r2(DB.accounts.filter(a => a.type === type && f(a)).reduce((s,a)=>s+bal(a.code, to),0));
+  const days = daysBetween(from, to) + 1, rev = sumType('income', from, to), cogs = bal(cogsAcc(), to, from) + bal('5000', to, from), np = profit(from, to);
+  const cash = sumT('asset', a => a.role === 'cash' || a.role === 'bank'), ar = bal(roleAcc('ar'), to), stock = bal(stockAcc(), to);
+  const ca = sumT('asset', a => !/^15/.test(a.code)), cl = sumT('liability', () => true), eq = sumT('equity', () => true) + profit('', to) - (DB.accounts.filter(a => a.type === 'equity').length ? 0 : 0);
+  const purchases = r2(DB.vouchers.filter(v => ['BILL','EXP'].includes(v.type) && v.date >= from && v.date <= to).reduce((s,v)=>s+totals(v).total*fxOf(v),0)), ap = bal(roleAcc('ap'), to);
+  const pay = bal('6100', to, from) + bal('6120', to, from), rent = bal('6000', to, from);
+  const r = (a, b) => b ? a / b : null;
+  return [
+    ['Liquidity', [['Current ratio', r(ca, cl), 'x', 'Current assets ÷ current liabilities. Above 1.5 is comfortable.'], ['Quick ratio', r(ca - stock, cl), 'x', 'Without stock. Above 1 means bills can be paid without selling stock.'], ['Working capital', ca - cl, 'money', 'Current assets less current liabilities.'], ['Cash and bank', cash, 'money', '']]],
+    ['Profitability', [['Revenue', rev, 'money', ''], ['Gross margin', r(rev - cogs, rev), '%', 'Revenue less products and supplies used.'], ['Net margin', r(np, rev), '%', 'Profit as a share of revenue.'], ['Return on equity', r(np, eq), '%', 'Profit for the period ÷ owner\'s equity.']]],
+    ['Costs', [['Staff costs to revenue', r(pay, rev), '%', 'Salaries and commission.'], ['Rent to revenue', r(rent, rev), '%', ''], ['Expenses to revenue', r(sumType('expense', from, to), rev), '%', '']]],
+    ['Collection and payment', [['Debtor days', r(ar, rev) * days, 'days', 'How long customers take to pay.'], ['Creditor days', r(ap, purchases) * days, 'days', 'How long you take to pay suppliers.'], ['Stock days', r(stock, bal(cogsAcc(), to, from)) * days, 'days', 'How long stock lasts at the current rate of sales.']]]
+  ];
+}
+function repRatio(){
+  const f = (v, k) => v == null || !isFinite(v) ? '–' : k === '%' ? (v * 100).toFixed(1) + '%' : k === 'x' ? v.toFixed(2) : k === 'days' ? Math.round(v) + ' days' : fmt(v);
+  return pTitle('Ratio analysis', `${dLong(state.from)} to ${dLong(state.to)}`) + ratioData(state.from, state.to).map(([g, rows]) => `<h3>${g}</h3>${rows.map(([l, v, k, n]) => `<div class="rrow sub"><span>${l}${n ? ` <span class="mini">${esc(n)}</span>` : ''}</span><span class="num">${f(v, k)}</span></div>`).join('')}`).join('');
+}
+
+/* ---------- exception reports ---------- */
+function exceptions(){
+  const out = [], t = todayISO(), S = stockCalc(), add = (area, text, act, id) => out.push({area, text, act, id});
+  for(const p of DB.products){ const s = S.P[p.id]; if(s && s.qty < -0.0001) add('Stock', `${p.name}: negative stock (${+s.qty.toFixed(2)} ${p.unit || ''})`, 'editProduct', p.id); }
+  for(const a of DB.accounts.filter(a => a.role === 'cash')){ let b = 0, low = null; for(const l of linesOf(a.code)){ b = r2(b + l.dr - l.cr); if(b < -0.005 && !low) low = l; } if(low) add('Cash', `${a.name} went below zero on ${dLong(low.date)} (${low.v.no})`, 'editV', low.v.id); }
+  for(const v of DB.vouchers){
+    if(v.date > t && !NONPOST.includes(v.type)) add('Dates', `${v.no} is dated in the future (${dLong(v.date)})`, 'editV', v.id);
+    if(v.type === 'INV' && docStatus(v) === 'Overdue' && daysBetween(v.due, t) > 60) add('Receivables', `${v.no} ${contactName(v)}: ${fmt(outstanding(v))} over 60 days overdue`, 'editV', v.id);
+    if(v.type === 'BILL' && docStatus(v) === 'Overdue') add('Payables', `${v.no} ${contactName(v)}: ${fmt(outstanding(v))} overdue since ${dLong(v.due)}`, 'editV', v.id);
+    if(v.appr === 'pending') add('Approval', `${v.no} is waiting for approval`, 'editV', v.id);
+    if(['EXP','BILL'].includes(v.type) && totals(v).total * fxOf(v) >= 1000 && !v.ref) add('Documents', `${v.no}: ${money(totals(v).total * fxOf(v))} without a receipt or invoice number`, 'editV', v.id);
+  }
+  const seen = {}; for(const v of DB.vouchers.filter(v => v.type === 'BILL' && v.ref)){ const k = v.party + '|' + v.ref.trim().toLowerCase(); if(seen[k]) add('Duplicates', `${v.no} and ${seen[k].no}: same supplier invoice number ${v.ref}`, 'editV', v.id); else seen[k] = v; }
+  for(const c of DB.contacts){ const b = partyBalance(c.id); if(c.kind === 'customer' && b < -0.005) add('Balances', `${c.name} has a credit balance of ${fmt(-b)} (advance or overpayment)`, 'editContact', c.id); if(c.kind === 'supplier' && b < -0.005) add('Balances', `${c.name}: you have paid ${fmt(-b)} more than billed`, 'editContact', c.id); }
+  const unrec = DB.statement.filter(s => !s.match && daysBetween(s.date, t) > 30); if(unrec.length) add('Bank', `${unrec.length} statement lines older than 30 days are not matched`, '', '');
+  for(const e of DB.employees.filter(e => !e.left || e.left >= t)) if((e.payMode || 'Bank') !== 'Cash' && (!e.iban || String(e.labourId||'').replace(/\D/g,'').length !== 14)) add('Payroll', `${e.name}: IBAN or 14-digit person ID missing for WPS`, 'editEmp', e.id);
+  if(DB.settings.vatOn && !DB.settings.trn) add('VAT', 'VAT is on but your TRN is not set (Settings → VAT)', '', '');
+  const lastRec = DB.recons.map(r => r.date).sort().at(-1); if(DB.vouchers.length && (!lastRec || daysBetween(lastRec, t) > 45)) add('Controls', `No month-end reconciliation saved since ${lastRec ? dLong(lastRec) : 'the start'}`, '', '');
+  return out;
+}
+function repExc(){
+  const x = exceptions(), groups = [...new Set(x.map(r => r.area))];
+  return pTitle('Exceptions', `${x.length} item${x.length === 1 ? '' : 's'} to look at`) + (x.length ? groups.map(g => `<h3>${esc(g)}</h3>${x.filter(r => r.area === g).map(r => `<div class="rrow sub">${r.act ? `<a data-act="${r.act}" data-id="${r.id}">${esc(r.text)}</a>` : `<span>${esc(r.text)}</span>`}</div>`).join('')}`).join('')
+    : '<p>Nothing unusual: no negative stock or cash, no future-dated entries, no duplicate bills, no long-overdue items.</p>');
+}
+
+/* =====================================================================
+   company.js — several companies, year-end closing, year-on-year comparison
+   On a PC every company is its own folder; online every company is its
+   own folder on the server.
+   ===================================================================== */
+/* a new, empty company: the next folder load starts from blank books with this name */
+function takeNewCompany(){ try{ const n = sessionStorage.getItem('mq_newco'); if(n){ sessionStorage.removeItem('mq_newco'); return n; } }catch(e){} return ''; }
+async function companiesLocal(){ try{ return (await idb.get('companies')) || []; }catch(e){ return []; } }
+async function rememberCompany(name, handle){ const list = await companiesLocal(); const i = list.findIndex(c => c.name === name || (c.handle && handle && c.handle.name === handle.name && c.name === name)); if(i >= 0) list[i] = {name, handle}; else list.push({name, handle}); await idb.set('companies', list); }
+let CO_LIST = null;
+async function loadCompanyList(){
+  if(SERVER){ try{ const r = await apiJSON('cos'); CO_LIST = r.list.map(c => ({name:c.name, code:c.code, current:c.code === r.current})); }catch(e){ CO_LIST = []; } }
+  else { const list = await companiesLocal(); if(dirHandle && !list.some(c => c.handle?.name === dirHandle.name)){ list.push({name:DB.settings.biz, handle:dirHandle}); try{ await idb.set('companies', list); }catch(e){} }
+    CO_LIST = list.map((c, i) => ({name:c.name, i, current: !!(dirHandle && c.handle && c.handle.name === dirHandle.name && c.name === DB.settings.biz) || (!!dirHandle && c.handle?.name === dirHandle.name)})); }
+  if(state.view === 'settings' && state.stab === 'company2') render();
+}
+function companySettings(){
+  if(!CO_LIST){ loadCompanyList(); return '<section class="panel"><p class="mini">Loading…</p></section>'; }
+  return `<section class="panel"><div class="panel-head"><div><h2>Companies</h2><p>${SERVER ? 'Each company has its own books on the server.' : 'Each company is a separate folder with its own database and Excel books.'} Switching saves the current books first.</p></div>${role() === 'owner' ? `<button class="btn ghost sm" data-act="newCompany">${ic('plus',14)}New company</button>` : ''}</div>
+    <table><thead><tr><th>Company</th><th></th></tr></thead><tbody>${CO_LIST.map(c => `<tr><td>${esc(c.name)}${c.current ? ' <span class="pill paid">Open</span>' : ''}</td><td class="r">${c.current ? '' : `<button class="btn ghost sm" data-act="openCompany" data-i="${SERVER ? esc(c.code) : c.i}">Open</button>`}</td></tr>`).join('') || '<tr><td colspan="2" class="mut">Only this company.</td></tr>'}</tbody></table>
+    ${!SERVER && !dirHandle ? '<p class="help" style="margin-top:10px">Choose a data folder first (Settings → Data folder).</p>' : ''}</section>` + yearEndPanel();
+}
+Object.assign(ACT, {
+  newCompany: async () => { if(role() !== 'owner') return toast('Only the owner can add companies.'); const name = prompt('Name of the new company'); if(!name || !name.trim()) return;
+    if(save.mode === 'saving') return toast('Wait a moment, still saving.');
+    if(SERVER){ try{ await apiPost('newco', {name:name.trim()}); }catch(e){ return toast(e.message); } try{ sessionStorage.setItem('mq_newco', name.trim()); }catch(e){} await releaseLock(); location.reload(); return; }
+    if(!('showDirectoryPicker' in window)) return toast('Open the app in Chrome or Edge.');
+    try{ const h = await window.showDirectoryPicker({id:'mcqueen-company', mode:'readwrite'}); if(dirHandle) await writeNow(true); await releaseLock();
+      await rememberCompany(name.trim(), h); if(!(await fileIn(h, DB_FILE))){ try{ sessionStorage.setItem('mq_newco', name.trim()); }catch(e){} }
+      dirHandle = h; await idb.set('dir', h); CO_LIST = null; await loadFromFolder(true); loadCompanyList(); }catch(e){ if(e.name !== 'AbortError') toast(e.message); } },
+  openCompany: async d => { if(save.mode === 'saving') return toast('Wait a moment, still saving.');
+    if(SERVER){ try{ await apiPost('setco', {co:d.i}); }catch(e){ return toast(e.message); } await releaseLock(); location.reload(); return; }
+    const list = await companiesLocal(), c = list[+d.i]; if(!c?.handle) return;
+    try{ if(await c.handle.queryPermission({mode:'readwrite'}) !== 'granted' && await c.handle.requestPermission({mode:'readwrite'}) !== 'granted') return toast('Allow access to open that company.');
+      if(dirHandle) await writeNow(true); await releaseLock(); dirHandle = c.handle; await idb.set('dir', c.handle); CO_LIST = null; await loadFromFolder(true); loadCompanyList(); }catch(e){ toast(e.message); } }
+});
+
+/* ---------- year-end closing ---------- */
+function fyEnd(y){ const s = +DB.settings.fyStart || 1; return s === 1 ? y + '-12-31' : addDays((y + 1) + '-' + pad(s) + '-01', -1); }
+function yearChecks(end){
+  const start = fyStartOf(end), out = [];
+  const pend = DB.vouchers.filter(v => v.appr === 'pending' && v.date <= end).length; if(pend) out.push(`${pend} entries waiting for approval`);
+  const drafts = DB.payruns.filter(r => r.status === 'Draft' && r.ym <= end.slice(0,7)).length; if(drafts) out.push(`${drafts} payroll month${drafts > 1 ? 's are' : ' is'} still a draft`);
+  if(DB.assets.length){ let k = start.slice(0,7); const miss = []; while(k <= end.slice(0,7)){ if(!DB.vouchers.some(v => v.ref === 'DEP-' + k) && assetDepFor(k).length) miss.push(kName(k)); k = nextKey(k); } if(miss.length) out.push('Depreciation not posted for ' + miss.join(', ')); }
+  const unrec = DB.statement.filter(s => !s.match && s.date <= end).length; if(unrec) out.push(`${unrec} bank statement lines not matched`);
+  if(!DB.vouchers.some(v => v.ref === 'CT-' + end) && ctData(start, end).tax > 0) out.push('Corporate tax provision not posted');
+  const neg = DB.products.filter(p => stockAt(p.id, end).qty < -0.0001).length; if(neg) out.push(`${neg} items with negative stock`);
+  return out;
+}
+function yearEndPanel(){
+  const years = [...new Set(DB.vouchers.map(v => fyStartOf(v.date).slice(0,4)))].sort().reverse().slice(0, 4), closed = String(DB.settings.closedYears || '').split(',').filter(Boolean);
+  return `<section class="panel"><div class="panel-head"><div><h2>Year-end closing</h2><p>Closing a year locks every entry up to the year end. Balances carry forward automatically: assets, liabilities and equity continue, income and expenses start again from zero, and the year's profit moves into retained earnings on the balance sheet.</p></div></div>
+    <table><thead><tr><th>Financial year</th><th>Ends</th><th>Profit</th><th>Status</th><th></th></tr></thead><tbody>${years.map(y => { const end = fyEnd(+y), st = fyStartOf(end), isC = closed.includes(y) || (DB.settings.lockDate && DB.settings.lockDate >= end);
+      return `<tr><td>${y}</td><td>${dLong(end)}</td><td class="num">${fmt(profit(st, end))}</td><td>${isC ? '<span class="pill paid">Closed</span>' : end < todayISO() ? '<span class="pill part">Open</span>' : '<span class="pill type">Current</span>'}</td>
+        <td class="r">${!isC && end < todayISO() ? `<button class="btn ghost sm" data-act="closeYear" data-y="${y}">Close year</button>` : ''}<button class="btn ghost sm" data-act="openingNext" data-y="${y}">${ic('print',14)}Closing balances</button></td></tr>`; }).join('') || '<tr><td colspan="5" class="mut">No entries yet.</td></tr>'}</tbody></table></section>`;
+}
+Object.assign(ACT, {
+  closeYear: d => { if(!['owner','accountant'].includes(role())) return toast('Only the owner or accountant can close a year.'); const end = fyEnd(+d.y), issues = yearChecks(end);
+    openDlg(`<div class="dlg"><h2>Close financial year ${d.y}</h2><p>Up to and including ${dLong(end)}. Profit for the year ${money(profit(fyStartOf(end), end))}.</p>
+      ${issues.length ? `<div class="banner" style="display:block"><b>Check these first:</b><ul style="margin:6px 0 0 18px">${issues.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>` : '<p><span class="pill paid">Ready</span> No open items found.</p>'}
+      <p class="help">The year can be reopened later by an owner by moving the lock date back under Settings → VAT, tax and period lock.</p>
+      <div class="dlg-foot" style="margin-top:16px"><button class="btn ghost" data-act="close">Cancel</button><button class="btn" data-act="closeYearGo" data-y="${d.y}">${issues.length ? 'Close anyway' : 'Close the year'}</button></div></div>`, 'mid'); },
+  closeYearGo: d => { const end = fyEnd(+d.y), s = DB.settings; if(!s.lockDate || s.lockDate < end) s.lockDate = end; s.closedYears = [...new Set([...String(s.closedYears || '').split(',').filter(Boolean), d.y])].join(',');
+    audit('Closed', null, `Financial year ${d.y} closed, locked up to ${dLong(end)}`); closeDlg(); commit(`Year ${d.y} closed`); },
+  openingNext: d => { const end = fyEnd(+d.y), b = bsData(end), s = DB.settings;
+    const sec = (l, rows) => `<h4>${l}</h4><table class="small"><tbody>${rows.map(x => `<tr><td>${esc((x.code ? x.code + ' ' : '') + x.name)}</td><td class="r">${fmt(x.amt)}</td></tr>`).join('')}</tbody></table>`;
+    printHTML(`<div class="inv">${docHead('CLOSING BALANCES', `<div>Year ${d.y}</div><div>as at ${dLong(end)}</div>`)}<p class="lead">These balances are the opening balances of the year starting ${dLong(addDays(end, 1))}.</p>
+      ${sec('Assets', b.assets)}${sec('Liabilities', b.liabs)}${sec('Equity', b.equity)}<div class="tt"><div class="g"><span>Assets</span><span>${fmt(b.ta)}</span></div><div><span>Liabilities and equity</span><span>${fmt(b.tl + b.te)}</span></div></div>${sigs(['Prepared by','Approved by'])}</div>`); }
+});
+
+/* ---------- comparison with the previous year ---------- */
+function repCmp(){
+  const {from, to} = state, pf = (+from.slice(0,4) - 1) + from.slice(4), pt = (+to.slice(0,4) - 1) + to.slice(4);
+  const row = (l, a, b, bold) => { const ch = r2(a - b), pc = b ? (ch / Math.abs(b) * 100).toFixed(1) + '%' : '–'; return `<tr${bold ? ' class="tot"' : ''}><td>${bold ? '<b>' + l + '</b>' : esc(l)}</td><td class="r num">${fmt(a)}</td><td class="r num">${fmt(b)}</td><td class="r num ${ch < 0 ? 'out' : 'in'}">${fmt(ch)}</td><td class="r">${pc}</td></tr>`; };
+  const sect = type => DB.accounts.filter(a => a.type === type).map(a => ({a, x:bal(a.code, to, from), y:bal(a.code, pt, pf)})).filter(r => Math.abs(r.x) > 0.005 || Math.abs(r.y) > 0.005);
+  const inc = sect('income'), exp = sect('expense'), S = xs => [r2(xs.reduce((t,r)=>t+r.x,0)), r2(xs.reduce((t,r)=>t+r.y,0))], [ti, tiy] = S(inc), [te, tey] = S(exp);
+  const b1 = bsData(to), b0 = bsData(pt);
+  return pTitle('Comparison with the previous year', `${dLong(from)} – ${dLong(to)} against ${dLong(pf)} – ${dLong(pt)}`) + `
+    <div class="tbl-wrap"><table><thead><tr><th>Profit and loss</th><th class="r">This period</th><th class="r">Last year</th><th class="r">Change</th><th class="r">%</th></tr></thead><tbody>
+    <tr class="acc-type"><td colspan="5">Income</td></tr>${inc.map(r => row(r.a.code + ' ' + r.a.name, r.x, r.y)).join('')}${row('Total income', ti, tiy, 1)}
+    <tr class="acc-type"><td colspan="5">Expenses</td></tr>${exp.map(r => row(r.a.code + ' ' + r.a.name, r.x, r.y)).join('')}${row('Total expenses', te, tey, 1)}${row('Net profit', ti - te, tiy - tey, 1)}</tbody></table></div>
+    <div class="tbl-wrap" style="margin-top:16px"><table><thead><tr><th>Balance sheet</th><th class="r">${dLong(to)}</th><th class="r">${dLong(pt)}</th><th class="r">Change</th><th class="r">%</th></tr></thead><tbody>
+    ${row('Total assets', b1.ta, b0.ta, 1)}${row('Total liabilities', b1.tl, b0.tl)}${row('Total equity', b1.te, b0.te)}${row('Cash and bank', DB.accounts.filter(a => a.role === 'cash' || a.role === 'bank').reduce((t,a)=>t+bal(a.code,to),0), DB.accounts.filter(a => a.role === 'cash' || a.role === 'bank').reduce((t,a)=>t+bal(a.code,pt),0))}
+    ${row('Receivables', bal(roleAcc('ar'), to), bal(roleAcc('ar'), pt))}${row('Payables', bal(roleAcc('ap'), to), bal(roleAcc('ap'), pt))}${row('Stock', bal(stockAcc(), to), bal(stockAcc(), pt))}</tbody></table></div>`;
+}
+
+/* =====================================================================
+   control.js — edit log (before / after of every change), approval of
+   entries, cheque printing, print layout settings, 80 mm receipts
+   ===================================================================== */
+const SNAP_KEYS = ['no','type','date','due','party','pname','ref','memo','payAcc','toAcc','amount','cur','fx','branch','status','appr'];
+const snap = v => v ? Object.assign(Object.fromEntries(SNAP_KEYS.filter(k => v[k] !== undefined && v[k] !== '').map(k => [k, v[k]])), {total:docTotal(v), items:(v.items || []).map(i => Object.fromEntries(Object.entries(i).filter(([k, x]) => x !== '' && x != null))), alloc:(v.alloc || []).map(a => ({doc:vById(a.doc)?.no || a.doc, amt:a.amt}))}) : null;
+function logEdit(act, before, after){ const v = after || before;
+  DB.editlog.push({t:new Date().toISOString(), user:userName(), act, id:v.id, no:v.no, type:v.type, before:before ? snap(before) : null, after:after ? snap(after) : null});
+  if(DB.editlog.length > 4000) DB.editlog.splice(0, DB.editlog.length - 4000); }
+const FIELD = {date:'Date', due:'Due date', party:'Customer / supplier', pname:'Payee', ref:'Reference', memo:'Remarks', payAcc:'Account', toAcc:'To account', amount:'Amount', cur:'Currency', fx:'Rate', branch:'Branch', status:'Status', appr:'Approval', total:'Total'};
+function diffText(a, b){
+  if(!a) return ['Created'];
+  if(!b) return ['Deleted (total ' + fmt(a.total) + ')'];
+  const out = [], show = (k, x) => k === 'party' ? (contact(x)?.name || x || '–') : ['payAcc','toAcc'].includes(k) ? (x ? accName(x) : '–') : ['amount','total'].includes(k) ? fmt(+x || 0) : k === 'branch' ? branchName(x) : (x ?? '–');
+  for(const k of Object.keys(FIELD)) if(String(a[k] ?? '') !== String(b[k] ?? '')) out.push(`${FIELD[k]}: ${show(k, a[k])} → ${show(k, b[k])}`);
+  const n = Math.max(a.items.length, b.items.length), lbl = i => i.desc || (i.acc ? accName(i.acc) : '') || productById(i.product)?.name || 'line';
+  for(let i = 0; i < n; i++){ const x = a.items[i], y = b.items[i]; if(!x){ out.push(`Line ${i+1} added: ${lbl(y)}`); continue; } if(!y){ out.push(`Line ${i+1} removed: ${lbl(x)}`); continue; }
+    for(const k of ['acc','desc','qty','rate','amount','vat','dr','cr','product','staff']) if(String(x[k] ?? '') !== String(y[k] ?? '')) out.push(`Line ${i+1} ${({acc:'account', desc:'description', qty:'quantity', rate:'rate', amount:'amount', vat:'VAT', dr:'debit', cr:'credit', product:'item', staff:'staff'})[k]}: ${k === 'acc' ? accName(x[k]) : k === 'staff' ? (emp(x[k])?.name || '–') : k === 'product' ? (productById(x[k])?.name || '–') : x[k] ?? '–'} → ${k === 'acc' ? accName(y[k]) : k === 'staff' ? (emp(y[k])?.name || '–') : k === 'product' ? (productById(y[k])?.name || '–') : y[k] ?? '–'}`); }
+  if(JSON.stringify(a.alloc) !== JSON.stringify(b.alloc)) out.push(`Applied to: ${a.alloc.map(x => x.doc + ' ' + fmt(x.amt)).join(', ') || '–'} → ${b.alloc.map(x => x.doc + ' ' + fmt(x.amt)).join(', ') || '–'}`);
+  return out.length ? out : ['Saved without changes'];
+}
+const needsApproval = () => (DB.settings.requireApproval === true || DB.settings.requireApproval === 'true') && ['cashier'].includes(role());
+const _saveVoucher2 = saveVoucher;
+saveVoucher = function(){
+  const before = F?._orig ? JSON.parse(JSON.stringify(vById(F._orig.id) || F._orig)) : null, ids = new Set(DB.vouchers.map(v => v.id));
+  const ok = _saveVoucher2(); if(!ok) return ok;
+  const after = before ? vById(before.id) : DB.vouchers.find(v => !ids.has(v.id));
+  if(after){ if(!before && needsApproval() && !NONPOST.includes(after.type)){ after.appr = 'pending'; toast(`${after.no} saved and sent for approval`); } logEdit(before ? 'Changed' : 'Created', before, after); invalidate(); saveLocal(); scheduleSave(); render(); }
+  return ok;
+};
+const _deleteVoucher1 = deleteVoucher;
+deleteVoucher = function(){ const before = F?._orig ? JSON.parse(JSON.stringify(F._orig)) : null; const r = _deleteVoucher1(); if(before && !vById(before.id)){ logEdit('Deleted', before, null); saveLocal(); scheduleSave(); } return r; };
+function historyDlg(id){
+  const list = DB.editlog.filter(x => x.id === id), v = vById(id);
+  return `<div class="dlg"><h2>History of ${esc(v?.no || list[0]?.no || '')}</h2><p>Every save, with what changed. Kept in the database (edit log).</p>
+    ${list.length ? list.slice().reverse().map(x => `<div class="hist"><div><b>${esc(x.act)}</b> · ${esc(x.user)} · <span class="mini">${esc(new Date(x.t).toLocaleString())}</span></div><ul>${diffText(x.before, x.after).map(t => `<li>${esc(t)}</li>`).join('')}</ul></div>`).join('') : '<p class="mini">No changes recorded since the edit log was switched on.</p>'}
+    <div class="dlg-foot" style="margin-top:14px"><button class="btn ghost" data-act="close">Close</button></div></div>`;
+}
+function editLogPanel(){
+  const list = DB.editlog.slice(-200).reverse();
+  return `<section class="panel"><div class="panel-head"><div><h2>Edit log</h2><p>Before and after of every entry that was created, changed or deleted. It cannot be edited from the app.</p></div><button class="btn ghost sm" data-act="dlEditLog">${ic('down',15)}Excel</button></div>
+    <div class="tbl-wrap" style="max-height:420px;overflow:auto"><table class="small"><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Entry</th><th>Changes</th></tr></thead><tbody>
+    ${list.map(x => `<tr data-act="history" data-id="${x.id}"><td>${esc(new Date(x.t).toLocaleString())}</td><td>${esc(x.user)}</td><td>${esc(x.act)}</td><td>${esc(x.no)}</td><td>${esc(diffText(x.before, x.after).slice(0, 3).join('; '))}</td></tr>`).join('') || '<tr><td colspan="5" class="mut">Nothing yet.</td></tr>'}</tbody></table></div></section>`;
+}
+function ctlButtons(v){
+  const appr = v.appr === 'pending' && ['owner','accountant'].includes(role()) ? `<button type="button" class="btn ghost" data-act="rejectV" data-id="${v.id}">Reject</button><button type="button" class="btn ghost" data-act="approveV" data-id="${v.id}">Approve</button>` : '';
+  const hist = DB.editlog.some(x => x.id === v.id) ? `<button type="button" class="btn ghost" data-act="history" data-id="${v.id}">History</button>` : '';
+  const chq = ['PAY','EXP'].includes(v.type) && acc(v.payAcc)?.role === 'bank' ? `<button type="button" class="btn ghost" data-act="printChq" data-id="${v.id}">Print cheque</button>` : '';
+  const rcpt = v.type === 'SAL' ? `<button type="button" class="btn ghost" data-act="printRcpt" data-id="${v.id}">Receipt 80 mm</button>` : '';
+  return appr + hist + chq + rcpt;
+}
+PAGES.approvals = () => {
+  const list = DB.vouchers.filter(v => v.appr === 'pending').sort((a,b) => a.date < b.date ? -1 : 1);
+  return header('Approvals', 'Entries made by cashiers wait here until the owner or accountant approves them. They do not reach the books before that.', {noNew:true}) + `<section class="panel">
+    ${list.length ? `<div class="tbl-wrap"><table><thead><tr><th>Date</th><th>Entry</th><th>Type</th><th>Details</th><th class="r">Amount</th><th>By</th><th></th></tr></thead><tbody>
+    ${list.map(v => { const by = DB.editlog.find(x => x.id === v.id && x.act === 'Created')?.user || ''; return `<tr data-act="editV" data-id="${v.id}"><td>${dShort(v.date)}</td><td>${esc(v.no)}</td><td><span class="pill type">${esc(TYPES[v.type].name)}</span></td><td>${entryDetails(v)}</td><td class="r num">${fmt(docTotal(v))}</td><td>${esc(by)}</td>
+      <td class="r">${['owner','accountant'].includes(role()) ? `<button class="btn ghost sm" data-act="rejectV" data-id="${v.id}">Reject</button> <button class="btn sm" data-act="approveV" data-id="${v.id}">Approve</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>
+    ${['owner','accountant'].includes(role()) && list.length > 1 ? '<div class="row-btns" style="margin-top:12px"><button class="btn" data-act="approveAll">Approve all</button></div>' : ''}` : empty('Nothing waiting', 'Every entry is approved.')}</section>`;
+};
+Object.assign(ACT, {
+  history: d => openDlg(historyDlg(d.id), 'mid'),
+  approveV: d => { if(!['owner','accountant'].includes(role())) return; const v = vById(d.id); if(!v) return; if(lockedDate(v.date)) return toast('That date is locked.'); const b = JSON.parse(JSON.stringify(v)); delete v.appr; logEdit('Approved', b, v); audit('Approved', v); closeDlg(); commit(`${v.no} approved`); },
+  approveAll: () => { const list = DB.vouchers.filter(v => v.appr === 'pending' && !lockedDate(v.date)); for(const v of list){ const b = JSON.parse(JSON.stringify(v)); delete v.appr; logEdit('Approved', b, v); audit('Approved', v); } commit(`${list.length} entries approved`); },
+  rejectV: d => { if(!['owner','accountant'].includes(role())) return; const v = vById(d.id); if(!v || !confirmBox(`Reject ${v.no}? It is deleted and the cashier can enter it again.`)) return; DB.vouchers = DB.vouchers.filter(x => x !== v); logEdit('Rejected', v, null); audit('Rejected', v); closeDlg(); commit(`${v.no} rejected`); },
+  dlEditLog: () => { const wb = XLSX.utils.book_new(); addSheet(wb, 'Edit log', [['When','Who','Action','Entry','Type','Changes'], ...DB.editlog.map(x => [x.t, x.user, x.act, x.no, TYPES[x.type]?.name || x.type, diffText(x.before, x.after).join('\n')])], [22,14,10,12,14,90]); XLSX.writeFile(wb, 'Edit_log.xlsx', {cellStyles:true}); },
+  printChq: d => { const v = vById(d.id); if(!v) return; printCheque(v.date, contactName(v) || v.pname || '', v.type === 'PAY' ? +v.amount : totals(v).total); },
+  printChqReg: d => { const c = chqById(d.id); if(c) printCheque(c.date, contact(c.party)?.name || '', +c.amount); },
+  printRcpt: d => { const v = vById(d.id); if(v) printHTML(receiptHTML(v), '80mm'); }
+});
+const _extAlerts0 = extAlerts;
+extAlerts = function(){ const out = _extAlerts0(); const n = DB.vouchers.filter(v => v.appr === 'pending').length; if(n && ['owner','accountant'].includes(role())) out.unshift([`${n} entr${n > 1 ? 'ies are' : 'y is'} waiting for approval.`, 'approvals']); return out; };
+const _canView0 = canView;
+canView = v => v === 'approvals' ? ['owner','accountant','cashier'].includes(role()) : _canView0(v);
+
+/* ---------- printing: paper size, 80 mm receipts, cheques ---------- */
+const _printHTML0 = printHTML;
+printHTML = function(html, paper){ const p = paper || DB.settings.printPaper || 'A4';
+  const css = p === 'A5' ? '@page{size:A5;margin:8mm} #printArea .inv{font-size:12px;max-width:none}' : p === '80mm' ? '@page{size:80mm auto;margin:3mm} #printArea{width:74mm}' : p === 'cheque' ? '' : '@page{size:A4;margin:12mm}';
+  _printHTML0(`<style>${css}${DB.settings.printFooter ? '' : ''}</style>${html}${DB.settings.printFooter && p !== 'cheque' && p !== '80mm' ? `<div class="inv"><div class="foot" style="text-align:center">${esc(DB.settings.printFooter)}</div></div>` : ''}`); };
+function receiptHTML(v){
+  const s = DB.settings, t = totals(v);
+  return `<div class="rcpt">${s.printLogo === false ? '' : `<img src="${LOGO_DARK}" alt="" style="width:46mm;display:block;margin:0 auto 2mm">`}<div class="c b">${esc(s.legal || s.biz)}</div>${s.address ? `<div class="c">${esc(s.address)}</div>` : ''}${s.phone ? `<div class="c">${esc(s.phone)}</div>` : ''}${s.trn ? `<div class="c">TRN ${esc(s.trn)}</div>` : ''}
+    <div class="c b" style="margin:2mm 0">${s.vatOn && s.trn ? 'SIMPLIFIED TAX INVOICE' : 'RECEIPT'}</div><div>${esc(v.no)}<span style="float:right">${dLong(v.date)}</span></div><hr>
+    ${t.rows.map(r => `<div>${esc(r.it.desc || accName(r.it.acc))}${r.it.qty && r.it.product ? ' × ' + r.it.qty : ''}<span style="float:right">${fmt(r.gross)}</span></div>${r.it.staff ? `<div class="mini">by ${esc(emp(r.it.staff)?.name || '')}</div>` : ''}`).join('')}<hr>
+    ${t.tax ? `<div>Net<span style="float:right">${fmt(t.net)}</span></div><div>VAT ${s.vatRate}%<span style="float:right">${fmt(t.tax)}</span></div>` : ''}<div class="b" style="font-size:14px">TOTAL ${esc(s.cur)}<span style="float:right">${fmt(t.total)}</span></div>
+    <div>Paid by ${esc(accName(v.payAcc))}</div><hr><div class="c">${esc(s.printFooter || 'Thank you for visiting')}</div></div>`;
+}
+const CHQ_DEF = {chqW:176, chqH:80, chqDateX:132, chqDateY:8, chqPayeeX:22, chqPayeeY:20, chqWordsX:22, chqWordsY:30, chqWordsW:110, chqAmtX:140, chqAmtY:32, chqAcPayee:true};
+const chqSet = k => { const x = DB.settings[k]; return x === undefined || x === '' ? CHQ_DEF[k] : typeof CHQ_DEF[k] === 'boolean' ? (x === true || x === 'true') : +x; };
+function printCheque(date, payee, amount){
+  const g = k => chqSet(k), d = date.split('-').reverse().join('').split('').join(' ');
+  const html = `<style>@page{size:${g('chqW')}mm ${g('chqH')}mm;margin:0} #printArea{padding:0}</style><div class="chq" style="width:${g('chqW')}mm;height:${g('chqH')}mm">
+    <div style="left:${g('chqDateX')}mm;top:${g('chqDateY')}mm;letter-spacing:1.6mm">${d}</div>
+    <div style="left:${g('chqPayeeX')}mm;top:${g('chqPayeeY')}mm">${esc(payee)}</div>
+    <div style="left:${g('chqWordsX')}mm;top:${g('chqWordsY')}mm;width:${g('chqWordsW')}mm;line-height:7mm">${esc(amountWords(amount).replace(/^UAE Dirhams /, 'Dirhams '))}</div>
+    <div style="left:${g('chqAmtX')}mm;top:${g('chqAmtY')}mm;font-weight:700">**${fmt(amount)}**</div>
+    ${g('chqAcPayee') ? '<div style="left:4mm;top:4mm;transform:rotate(-20deg);border-top:1px solid #000;border-bottom:1px solid #000;padding:0 3mm;font-size:9pt">A/C PAYEE ONLY</div>' : ''}</div>`;
+  printHTML(html, 'cheque');
+}
+function printSettings(){
+  const s = DB.settings, n = (k, l) => fld(l, inp(k, chqSet(k), 'type="number" step="0.5"'));
+  return `<div class="set-grid"><section class="panel"><form class="stack" data-form="printset"><h2 style="font:400 22px var(--serif);margin:0">Documents</h2>
+    <div class="grid3">${fld('Paper', `<select name="printPaper">${[['A4','A4'],['A5','A5 (half page)']].map(([k,l]) => opt(k, l, s.printPaper || 'A4')).join('')}</select>`)}${fld('Logo on documents', `<select name="printLogo">${opt('1','Yes', s.printLogo === false ? '0' : '1')}${opt('0','No', s.printLogo === false ? '0' : '1')}</select>`)}${fld('Signature lines', `<select name="printSigs">${opt('1','Yes', s.printSigs === false ? '0' : '1')}${opt('0','No', s.printSigs === false ? '0' : '1')}</select>`)}</div>
+    ${fld('Extra line under the company details', inp('printHeader', s.printHeader, 'placeholder="e.g. Licence no. 123456 · www.mcqueen.ae"'))}${fld('Footer on every document and receipt', inp('printFooter', s.printFooter, 'placeholder="e.g. Thank you for choosing McQueen"'))}
+    <h2 style="font:400 22px var(--serif);margin:12px 0 0">Approvals</h2>
+    <label style="display:flex;gap:10px;align-items:center"><input type="checkbox" class="chk" name="requireApproval" ${s.requireApproval === true || s.requireApproval === 'true' ? 'checked' : ''}> Entries made by cashiers wait for the owner's or accountant's approval before they reach the books</label>
+    <div><button class="btn" type="submit">Save</button></div></form></section>
+    <section class="panel"><form class="stack" data-form="chqset"><h2 style="font:400 22px var(--serif);margin:0">Cheque layout</h2><p class="help">Positions in millimetres from the top left corner of the cheque leaf. Print a test on plain paper, hold it against a cheque, and adjust.</p>
+    <div class="grid4">${n('chqW','Cheque width')}${n('chqH','Cheque height')}${n('chqDateX','Date from left')}${n('chqDateY','Date from top')}</div>
+    <div class="grid4">${n('chqPayeeX','Payee from left')}${n('chqPayeeY','Payee from top')}${n('chqWordsX','Words from left')}${n('chqWordsY','Words from top')}</div>
+    <div class="grid4">${n('chqWordsW','Words width')}${n('chqAmtX','Amount from left')}${n('chqAmtY','Amount from top')}<label style="display:flex;gap:8px;align-items:center;margin-top:22px"><input type="checkbox" class="chk" name="chqAcPayee" ${chqSet('chqAcPayee') ? 'checked' : ''}> A/C payee crossing</label></div>
+    <div class="row-btns"><button class="btn" type="submit">Save layout</button><button type="button" class="btn ghost" data-act="testChq">Test print</button></div></form></section></div>`;
+}
+ACT.testChq = () => printCheque(todayISO(), 'Sample Payee LLC', 12345.5);
+document.addEventListener('submit', e => { const f = e.target, k = f.dataset.form; if(k !== 'printset' && k !== 'chqset') return; e.preventDefault(); if(!['owner','accountant'].includes(role())) return toast('Only the owner or accountant can change this.');
+  const v = Object.fromEntries(new FormData(f).entries()), s = DB.settings;
+  if(k === 'printset'){ s.printPaper = v.printPaper; s.printLogo = v.printLogo !== '0'; s.printSigs = v.printSigs !== '0'; s.printHeader = v.printHeader.trim(); s.printFooter = v.printFooter.trim(); s.requireApproval = !!f.elements.requireApproval.checked; }
+  else { for(const key of Object.keys(CHQ_DEF)) if(key !== 'chqAcPayee') s[key] = num(v[key]); s.chqAcPayee = !!f.elements.chqAcPayee.checked; }
+  commit('Saved'); });
+
+/* =====================================================================
+   tallyx.js — exchange with Tally (TallyPrime XML)
+   Export: ledgers, parties, stock items and all entries for a period, as
+   Tally XML to import with Import → Masters / Transactions.
+   Import: a Tally XML export of masters and the Day Book, brought in as
+   accounts, customers, suppliers and journal entries.
+   ===================================================================== */
+const xa = n => (Math.round(n * 100) / 100).toFixed(2);
+/** Tally's built-in group for each account */
+function tallyGroup(a){
+  if(a.role === 'cash') return 'Cash-in-Hand'; if(a.role === 'bank') return 'Bank Accounts'; if(a.role === 'ar') return 'Sundry Debtors'; if(a.role === 'ap') return 'Sundry Creditors';
+  if(a.role === 'vatin' || a.role === 'vatout' || a.code === '2500') return 'Duties & Taxes';
+  if(a.type === 'income') return /^40|^41/.test(a.code) ? 'Sales Accounts' : 'Indirect Incomes';
+  if(a.type === 'expense') return /^5/.test(a.code) ? (a.code === '5100' ? 'Purchase Accounts' : 'Direct Expenses') : 'Indirect Expenses';
+  if(a.type === 'asset') return /^15/.test(a.code) ? 'Fixed Assets' : a.code === '1350' ? 'Stock-in-Hand' : ['1400','1450'].includes(a.code) ? 'Loans & Advances (Asset)' : 'Current Assets';
+  if(a.type === 'liability') return a.code === '2400' ? 'Provisions' : 'Current Liabilities';
+  return a.role === 're' ? 'Reserves & Surplus' : 'Capital Account';
+}
+function tallyNames(){ const used = {}, out = {acc:{}, party:{}}; const u = n => { let x = n, i = 2; while(used[x.toLowerCase()]) x = `${n} (${i++})`; used[x.toLowerCase()] = 1; return x; };
+  for(const a of DB.accounts) if(a.role !== 'ar' && a.role !== 'ap') out.acc[a.code] = u(a.name); for(const a of DB.accounts.filter(a => a.role === 'ar' || a.role === 'ap')) out.acc[a.code] = u(a.name);
+  for(const c of DB.contacts) out.party[c.id] = u(c.name); return out; }
+const TALLY_VTYPE = v => ({SAL:'Sales', INV:'Sales', BILL:'Purchase', EXP:'Payment', RCPT:'Receipt', PAY:'Payment', CN:'Credit Note', DN:'Debit Note', JV:'Journal', ADJ:'Journal'})[v.type] || (v.type === 'TRF' && [acc(v.payAcc)?.role, acc(v.toAcc)?.role].every(r => r === 'cash' || r === 'bank') ? 'Contra' : 'Journal');
+function tallyEnvelope(report, msgs){ return `<ENVELOPE>\n <HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>\n <BODY><IMPORTDATA>\n  <REQUESTDESC><REPORTNAME>${report}</REPORTNAME><STATICVARIABLES><SVCURRENTCOMPANY>${xe(DB.settings.legal || DB.settings.biz)}</SVCURRENTCOMPANY></STATICVARIABLES></REQUESTDESC>\n  <REQUESTDATA>\n${msgs.join('\n')}\n  </REQUESTDATA>\n </IMPORTDATA></BODY>\n</ENVELOPE>\n`; }
+function tallyMastersXML(){
+  const N = tallyNames(), m = [];
+  const units = [...new Set(DB.products.flatMap(p => [p.unit || 'pcs', p.altUnit].filter(Boolean)))];
+  units.forEach(u => m.push(`   <TALLYMESSAGE xmlns:UDF="TallyUDF"><UNIT NAME="${xe(u)}" ACTION="Create"><NAME>${xe(u)}</NAME><ISSIMPLEUNIT>Yes</ISSIMPLEUNIT><DECIMALPLACES>2</DECIMALPLACES></UNIT></TALLYMESSAGE>`));
+  for(const a of DB.accounts){ if(a.role === 'ar' || a.role === 'ap') continue;
+    m.push(`   <TALLYMESSAGE xmlns:UDF="TallyUDF"><LEDGER NAME="${xe(N.acc[a.code])}" ACTION="Create"><NAME.LIST><NAME>${xe(N.acc[a.code])}</NAME></NAME.LIST><PARENT>${xe(tallyGroup(a))}</PARENT><ISBILLWISEON>No</ISBILLWISEON><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER></TALLYMESSAGE>`); }
+  for(const a of DB.accounts.filter(a => a.role === 'ar' || a.role === 'ap'))
+    m.push(`   <TALLYMESSAGE xmlns:UDF="TallyUDF"><LEDGER NAME="${xe(N.acc[a.code])}" ACTION="Create"><NAME.LIST><NAME>${xe(N.acc[a.code])}</NAME></NAME.LIST><PARENT>${xe(tallyGroup(a))}</PARENT><ISBILLWISEON>No</ISBILLWISEON><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER></TALLYMESSAGE>`);
+  for(const c of DB.contacts) m.push(`   <TALLYMESSAGE xmlns:UDF="TallyUDF"><LEDGER NAME="${xe(N.party[c.id])}" ACTION="Create"><NAME.LIST><NAME>${xe(N.party[c.id])}</NAME></NAME.LIST><PARENT>${c.kind === 'supplier' ? 'Sundry Creditors' : 'Sundry Debtors'}</PARENT><ISBILLWISEON>Yes</ISBILLWISEON>${c.address ? `<ADDRESS.LIST><ADDRESS>${xe(c.address.split('\n')[0])}</ADDRESS></ADDRESS.LIST>` : ''}${c.trn ? `<VATTINNUMBER>${xe(c.trn)}</VATTINNUMBER>` : ''}${c.email ? `<EMAIL>${xe(c.email)}</EMAIL>` : ''}${c.phone ? `<LEDGERPHONE>${xe(c.phone)}</LEDGERPHONE>` : ''}<BILLCREDITPERIOD>${+c.terms || 0} Days</BILLCREDITPERIOD><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER></TALLYMESSAGE>`);
+  for(const p of DB.products) m.push(`   <TALLYMESSAGE xmlns:UDF="TallyUDF"><STOCKITEM NAME="${xe(p.name)}" ACTION="Create"><NAME.LIST><NAME>${xe(p.name)}</NAME></NAME.LIST><PARENT/><BASEUNITS>${xe(p.unit || 'pcs')}</BASEUNITS>${p.altUnit && +p.altFactor ? `<ADDITIONALUNITS>${xe(p.altUnit)}</ADDITIONALUNITS><CONVERSION>${+p.altFactor}</CONVERSION><DENOMINATOR>1</DENOMINATOR>` : ''}${p.sku ? `<PARTNUMBER>${xe(p.sku)}</PARTNUMBER>` : ''}<OPENINGBALANCE>0</OPENINGBALANCE></STOCKITEM></TALLYMESSAGE>`);
+  return tallyEnvelope('All Masters', m);
+}
+function tallyVouchersXML(from, to){
+  const N = tallyNames(), m = [];
+  for(const v of sortedVouchers()){ if(v.date < from || v.date > to || NONPOST.includes(v.type) || v.appr === 'pending') continue; const L = post(v); if(!L.length) continue;
+    const vt = TALLY_VTYPE(v), party = v.party ? N.party[v.party] : '';
+    const ent = L.map(l => { const isParty = l.party && ['ar','ap'].includes(acc(l.acc)?.role), name = isParty ? N.party[l.party] : N.acc[l.acc], dr = l.dr > 0, amt = dr ? -l.dr : l.cr;
+      let bills = ''; if(isParty){ const own = ['INV','BILL','CN','DN'].includes(v.type); const refs = own ? [[v.type === 'BILL' && v.ref ? v.ref : v.no, 'New Ref', amt]] : (v.alloc || []).map(a => { const d = vById(a.doc); return [d ? (d.type === 'BILL' && d.ref ? d.ref : d.no) : '', 'Agst Ref', dr ? -r2(a.amt * fxOf(d || v)) : r2(a.amt * fxOf(d || v))]; });
+        const left = r2(amt - refs.reduce((s,x)=>s+x[2],0)); if(Math.abs(left) > 0.005) refs.push(['', 'On Account', left]);
+        bills = refs.map(([n, t, a]) => `<BILLALLOCATIONS.LIST>${n ? `<NAME>${xe(n)}</NAME>` : ''}<BILLTYPE>${t}</BILLTYPE><AMOUNT>${xa(a)}</AMOUNT></BILLALLOCATIONS.LIST>`).join(''); }
+      return `<ALLLEDGERENTRIES.LIST><LEDGERNAME>${xe(name)}</LEDGERNAME><ISDEEMEDPOSITIVE>${dr ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE><ISPARTYLEDGER>${isParty ? 'Yes' : 'No'}</ISPARTYLEDGER><AMOUNT>${xa(amt)}</AMOUNT>${bills}</ALLLEDGERENTRIES.LIST>`; }).join('');
+    m.push(`   <TALLYMESSAGE xmlns:UDF="TallyUDF"><VOUCHER VCHTYPE="${vt}" ACTION="Create" OBJVIEW="Accounting Voucher View"><DATE>${v.date.replace(/-/g,'')}</DATE><EFFECTIVEDATE>${v.date.replace(/-/g,'')}</EFFECTIVEDATE><VOUCHERTYPENAME>${vt}</VOUCHERTYPENAME><VOUCHERNUMBER>${xe(v.no)}</VOUCHERNUMBER>${v.ref ? `<REFERENCE>${xe(v.ref)}</REFERENCE>` : ''}${party ? `<PARTYLEDGERNAME>${xe(party)}</PARTYLEDGERNAME>` : ''}<NARRATION>${xe([v.memo, v.pname && !v.party ? v.pname : ''].filter(Boolean).join(' – ') || TYPES[v.type].name + ' ' + v.no)}</NARRATION><PERSISTEDVIEW>Accounting Voucher View</PERSISTEDVIEW>${ent}</VOUCHER></TALLYMESSAGE>`); }
+  return {xml:tallyEnvelope('Vouchers', m), count:m.length};
+}
+
+/* ---------- import from Tally ---------- */
+const TALLY_PRIMARY = {'sundry debtors':['asset','ar'], 'sundry creditors':['liability','ap'], 'cash-in-hand':['asset','cash'], 'bank accounts':['asset','bank'], 'bank od a/c':['liability','bank'], 'bank occ a/c':['liability','bank'],
+  'duties & taxes':['liability',''], 'sales accounts':['income',''], 'direct incomes':['income',''], 'indirect incomes':['income',''], 'income (direct)':['income',''], 'income (indirect)':['income',''],
+  'purchase accounts':['expense',''], 'direct expenses':['expense',''], 'indirect expenses':['expense',''], 'expenses (direct)':['expense',''], 'expenses (indirect)':['expense',''],
+  'fixed assets':['asset','fixed'], 'current assets':['asset',''], 'loans & advances (asset)':['asset',''], 'deposits (asset)':['asset',''], 'stock-in-hand':['asset',''], 'investments':['asset',''], 'misc. expenses (asset)':['asset',''],
+  'current liabilities':['liability',''], 'provisions':['liability',''], 'loans (liability)':['liability',''], 'secured loans':['liability',''], 'unsecured loans':['liability',''], 'suspense a/c':['liability',''], 'branch / divisions':['liability',''],
+  'capital account':['equity',''], 'reserves & surplus':['equity','']};
+function decodeTally(buf){ const u = new Uint8Array(buf); let t;
+  if((u[0] === 0xFF && u[1] === 0xFE) || (u[1] === 0 && u[3] === 0)) t = new TextDecoder('utf-16le').decode(u); else if(u[0] === 0xFE && u[1] === 0xFF) t = new TextDecoder('utf-16be').decode(u); else t = new TextDecoder('utf-8').decode(u);
+  return t.replace(/^﻿/, '').replace(/&#(?:[0-8]|1[1-2]|1[4-9]|2\d|3[01]);/g, '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ''); }
+const ch = (el, tag) => [...el.children].find(c => c.tagName === tag);
+const chT = (el, tag) => (ch(el, tag)?.textContent || '').trim();
+const tName = el => el.getAttribute('NAME') || chT(ch(el, 'NAME.LIST') || el, 'NAME') || chT(el, 'NAME');
+function parseTally(texts){
+  const groups = {}, ledgers = {}, vouchers = [];
+  for(const text of texts){ const doc = new DOMParser().parseFromString(text, 'application/xml'); if(doc.getElementsByTagName('parsererror').length) throw new Error('One of the files is not valid XML');
+    for(const g of doc.getElementsByTagName('GROUP')){ const n = tName(g); if(n) groups[n.toLowerCase()] = chT(g, 'PARENT'); }
+    for(const l of doc.getElementsByTagName('LEDGER')){ const n = tName(l); if(!n) continue; ledgers[n] = {name:n, parent:chT(l, 'PARENT'), open:num(chT(l, 'OPENINGBALANCE')), trn:chT(l, 'VATTINNUMBER') || chT(l, 'PARTYGSTIN'), addr:[...l.getElementsByTagName('ADDRESS')].map(a => a.textContent.trim()).join('\n')}; }
+    for(const v of doc.getElementsByTagName('VOUCHER')){ if(chT(v, 'ISCANCELLED') === 'Yes' || chT(v, 'ISOPTIONAL') === 'Yes' || chT(v, 'ISDELETED') === 'Yes') continue;
+      const d = chT(v, 'DATE'); if(!/^\d{8}$/.test(d)) continue; const lines = [];
+      const take = el => { const n = chT(el, 'LEDGERNAME'), a = num(chT(el, 'AMOUNT')); if(n && a) lines.push({name:n, dr: a < 0 ? r2(-a) : 0, cr: a > 0 ? r2(a) : 0}); };
+      for(const c of v.children){ if(c.tagName === 'ALLLEDGERENTRIES.LIST' || c.tagName === 'LEDGERENTRIES.LIST') take(c);
+        if(c.tagName === 'ALLINVENTORYENTRIES.LIST' || c.tagName === 'INVENTORYENTRIES.LIST') for(const a of c.children) if(a.tagName === 'ACCOUNTINGALLOCATIONS.LIST') take(a); }
+      vouchers.push({date:d.slice(0,4) + '-' + d.slice(4,6) + '-' + d.slice(6), type:chT(v, 'VOUCHERTYPENAME') || v.getAttribute('VCHTYPE') || 'Journal', no:chT(v, 'VOUCHERNUMBER'), memo:chT(v, 'NARRATION'), lines}); } }
+  const primary = p => { let x = (p || '').toLowerCase(), guard = 0; while(x && !TALLY_PRIMARY[x] && groups[x] !== undefined && guard++ < 30) x = groups[x].toLowerCase(); return TALLY_PRIMARY[x] || null; };
+  for(const v of vouchers) for(const l of v.lines) if(!ledgers[l.name]) ledgers[l.name] = {name:l.name, parent:'', open:0};
+  for(const l of Object.values(ledgers)) l.map = primary(l.parent) || guessType(l.name);
+  return {ledgers:Object.values(ledgers), vouchers};
+}
+function guessType(n){ const s = n.toLowerCase(); if(/cash/.test(s)) return ['asset','cash']; if(/bank/.test(s)) return ['asset','bank']; if(/vat|tax/.test(s)) return ['liability','']; if(/sales|income|revenue/.test(s)) return ['income','']; if(/capital/.test(s)) return ['equity','']; return ['expense','']; }
+let TALLY_IN = null;
+function tallyPreview(data){
+  const accByName = n => DB.accounts.find(a => nameKey(a.name) === nameKey(n)), cByName = n => DB.contacts.find(c => nameKey(c.name) === nameKey(n));
+  const parties = data.ledgers.filter(l => l.map[1] === 'ar' || l.map[1] === 'ap'), accs = data.ledgers.filter(l => !(l.map[1] === 'ar' || l.map[1] === 'ap'));
+  const bad = data.vouchers.filter(v => Math.abs(v.lines.reduce((s,l)=>s+l.dr-l.cr,0)) > 0.01 || !v.lines.length), dup = data.vouchers.filter(v => DB.vouchers.some(x => x.ref === `Tally ${v.type} ${v.no}` && x.date === v.date));
+  const dates = data.vouchers.map(v => v.date).sort(), open = data.ledgers.filter(l => Math.abs(l.open) > 0.005);
+  return `<div class="dlg"><h2>Import from Tally</h2><p>${data.ledgers.length} ledgers and ${data.vouchers.length} vouchers${dates.length ? ` from ${dLong(dates[0])} to ${dLong(dates.at(-1))}` : ''}.</p>
+    <table class="small"><tbody>
+      <tr><td>Accounts</td><td>${accs.filter(l => accByName(l.name)).length} already here, ${accs.filter(l => !accByName(l.name)).length} new</td></tr>
+      <tr><td>Customers and suppliers</td><td>${parties.filter(l => cByName(l.name)).length} already here, ${parties.filter(l => !cByName(l.name)).length} new</td></tr>
+      <tr><td>Opening balances</td><td>${open.length} ledgers, posted as one journal against Opening balance equity</td></tr>
+      <tr><td>Vouchers to import</td><td>${data.vouchers.length - bad.length - dup.length} as journal entries</td></tr>
+      ${bad.length ? `<tr><td>Skipped, not balanced</td><td class="out">${bad.length}: ${esc(bad.slice(0, 5).map(v => v.type + ' ' + v.no).join(', '))}</td></tr>` : ''}
+      ${dup.length ? `<tr><td>Skipped, already imported</td><td>${dup.length}</td></tr>` : ''}</tbody></table>
+    <h4>How Tally groups map</h4><table class="small"><tbody>${[...new Set(data.ledgers.map(l => l.parent || '(none)'))].slice(0, 30).map(p => { const l = data.ledgers.find(x => (x.parent || '(none)') === p); return `<tr><td>${esc(p)}</td><td>${esc(ACC_TYPES[l.map[0]] || l.map[0])}${l.map[1] ? ' · ' + esc(({ar:'customers', ap:'suppliers', cash:'cash', bank:'bank', fixed:'fixed assets'})[l.map[1]] || '') : ''}</td></tr>`; }).join('')}</tbody></table>
+    <p class="help">Vouchers come in as journal entries with the Tally voucher type and number as reference, so every ledger balance matches Tally. Download a backup first (Settings → Data).</p>
+    <div class="dlg-foot" style="margin-top:14px"><button class="btn ghost" data-act="close">Cancel</button><button class="btn" data-act="tallyImportGo">Import</button></div></div>`;
+}
+function tallyImport(data){
+  const now = new Date().toISOString(), accMap = {}, partyMap = {};
+  for(const l of data.ledgers){ const [type, role] = l.map;
+    if(role === 'ar' || role === 'ap'){ let c = DB.contacts.find(x => nameKey(x.name) === nameKey(l.name)); if(!c){ c = {id:uid('c'), kind: role === 'ar' ? 'customer' : 'supplier', name:l.name, phone:'', email:'', trn:l.trn || '', address:l.addr || '', terms:30, cat:''}; DB.contacts.push(c); } partyMap[l.name] = c.id; accMap[l.name] = roleAcc(role); continue; }
+    let a = DB.accounts.find(x => nameKey(x.name) === nameKey(l.name));
+    if(!a){ const r = role === 'fixed' ? '' : role; const code = role === 'fixed' ? (() => { let c = 1510; while(acc(String(c))) c++; return String(c); })() : suggestCode(type, r); a = {code, name:l.name, type, role: r === 'cash' || r === 'bank' ? r : '', active:true}; DB.accounts.push(a); DB.accounts.sort((x,y)=>x.code.localeCompare(y.code)); }
+    accMap[l.name] = a.code; }
+  const dates = data.vouchers.map(v => v.date).sort(), openDate = dates[0] || todayISO(); let n = 0, skipped = 0;
+  const open = data.ledgers.filter(l => Math.abs(l.open) > 0.005);
+  if(open.length && !DB.vouchers.some(v => v.ref === 'TALLY-OPENING')){ const items = open.map(l => ({acc:accMap[l.name], desc:'Opening balance from Tally – ' + l.name, dr: l.open < 0 ? r2(-l.open) : 0, cr: l.open > 0 ? r2(l.open) : 0, ...(partyMap[l.name] ? {party:partyMap[l.name]} : {})}));
+    const diff = r2(items.reduce((s,i)=>s+i.dr-i.cr,0)); if(diff) items.push({acc:'3050', desc:'Opening balance difference', dr: diff < 0 ? -diff : 0, cr: diff > 0 ? diff : 0});
+    DB.vouchers.push({id:uid('v'), no:nextNo('JV'), type:'JV', first:true, date:openDate, due:'', party:'', pname:'', ref:'TALLY-OPENING', memo:'Opening balances from Tally', payAcc:'', toAcc:'', amount:0, incl:false, items, alloc:[], created:now, updated:now}); }
+  for(const v of data.vouchers){ const ref = `Tally ${v.type} ${v.no}`; if(!v.lines.length || Math.abs(v.lines.reduce((s,l)=>s+l.dr-l.cr,0)) > 0.01 || DB.vouchers.some(x => x.ref === ref && x.date === v.date)){ skipped++; continue; }
+    if(lockedDate(v.date)){ skipped++; continue; }
+    const items = v.lines.map(l => ({acc:accMap[l.name], desc:v.memo || ref, dr:l.dr, cr:l.cr, ...(partyMap[l.name] ? {party:partyMap[l.name]} : {})}));
+    DB.vouchers.push({id:uid('v'), no:nextNo('JV'), type:'JV', date:v.date, due:'', party:'', pname:'', ref, memo:v.memo || '', payAcc:'', toAcc:'', amount:0, incl:false, items, alloc:[], created:now, updated:now}); n++; }
+  audit('Imported', null, `Tally: ${n} vouchers, ${data.ledgers.length} ledgers, ${skipped} skipped`); return {n, skipped};
+}
+
+/* ---------- page ---------- */
+function tallySettings(){
+  return `<div class="set-grid"><section class="panel"><div class="panel-head"><div><h2>Export to Tally</h2><p>For an accountant or auditor who works in TallyPrime. Import the masters first, then the transactions (Gateway of Tally → Import → Masters / Transactions).</p></div></div>
+      <div class="grid3">${fld('From', `<input type="date" id="txFrom" value="${fyStartOf(todayISO())}">`)}${fld('To', `<input type="date" id="txTo" value="${todayISO()}">`)}</div>
+      <div class="row-btns" style="margin-top:12px"><button class="btn" data-act="tallyExport">${ic('down',15)}Download Tally XML</button></div>
+      <p class="help" style="margin-top:10px">Accounts go into Tally's standard groups (Sundry Debtors, Sundry Creditors, Bank Accounts, Duties & Taxes, Sales and Purchase Accounts, Direct and Indirect Expenses…), customers and suppliers become bill-wise party ledgers with their TRN, and invoices, bills, receipts and payments carry bill references. Entries go across as accounting vouchers; stock items go as masters.</p></section>
+    <section class="panel"><div class="panel-head"><div><h2>Import from Tally</h2><p>In TallyPrime: Export → Masters (All Masters) and Export → Transactions (Day Book), format XML. Choose both files here.</p></div></div>
+      <div class="row-btns"><button class="btn ghost" data-act="tallyPick">Choose Tally XML files</button></div>
+      <p class="help" style="margin-top:10px">Ledgers become accounts, customers and suppliers. Every voucher comes in as a journal entry with its Tally reference, so balances match Tally exactly. Running the same import twice skips what is already there.</p></section></div>`;
+}
+Object.assign(ACT, {
+  tallyExport: () => { const from = $('#txFrom')?.value || '', to = $('#txTo')?.value || todayISO();
+    dlText(tallyMastersXML(), 'Tally_Masters.xml'); const v = tallyVouchersXML(from || '0000', to); setTimeout(() => dlText(v.xml, `Tally_Vouchers_${from}_${to}.xml`), 400);
+    audit('Exported', null, `Tally XML: masters and ${v.count} vouchers`); saveLocal(); toast(`Tally files downloaded: masters and ${v.count} vouchers`); },
+  tallyPick: () => { const i = document.createElement('input'); i.type = 'file'; i.accept = '.xml,.XML'; i.multiple = true;
+    i.onchange = async () => { try{ const texts = await Promise.all([...i.files].map(async f => decodeTally(await f.arrayBuffer()))); TALLY_IN = parseTally(texts); openDlg(tallyPreview(TALLY_IN), 'mid'); }catch(e){ toast('Could not read the file: ' + e.message); } }; i.click(); },
+  tallyImportGo: () => { if(!guardWrite() || !TALLY_IN) return; const r = tallyImport(TALLY_IN); TALLY_IN = null; closeDlg(); commit(`Imported ${r.n} vouchers from Tally${r.skipped ? `, ${r.skipped} skipped` : ''}`); }
+});
+
+/* =====================================================================
+   ext2.js — menu, report tabs and icons for orders, approvals, Day Book,
+   cash flow, ratios, exceptions, comparison and Tally
+   ===================================================================== */
+Object.assign(ICON, {
+  orders:'<path d="M6 3h12v18H6z"/><path d="M9 7h6M9 11h6M9 15h3"/>',
+  approvals:'<path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/><path d="M9 12l2 2 4-4"/>'
+});
+NAV[1][1].splice(2, 0, ['orders','Orders']);
+NAV[3][1].push(['approvals','Approvals']);
+RTABS.splice(4, 0, ['daybook','Day Book'], ['cf','Cash flow'], ['ratio','Ratios'], ['cmp','Year on year'], ['exc','Exceptions']);
+Object.assign(EXT_REPORTS, {daybook:repDayBook, cf:repCF, ratio:repRatio, exc:repExc, cmp:repCmp});
+
+/* =====================================================================
    sqlite.js — the SQLite database file (McQueen_Books.db)
    The app keeps its working copy in memory and writes the whole .db file
    on every save. Tables follow McQueen_Local_Database_Plan.xlsx.
    ===================================================================== */
 let SQL = null;
 const sqlReady = initSqlJs({wasmBinary: Uint8Array.from(atob(SQL_WASM_B64), c => c.charCodeAt(0))}).then(s => (SQL = s));
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const SCHEMA = `
 PRAGMA user_version = ${SCHEMA_VERSION};
 CREATE TABLE app_info (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE accounts (code TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL CHECK (type IN ('asset','liability','equity','income','expense')), role TEXT, active INTEGER NOT NULL DEFAULT 1, ct_treatment TEXT);
-CREATE TABLE contacts (id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK (kind IN ('customer','supplier')), name TEXT NOT NULL, phone TEXT, email TEXT, trn TEXT, address TEXT, terms_days REAL, default_account TEXT REFERENCES accounts(code), peppol_id TEXT, currency TEXT);
+CREATE TABLE contacts (id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK (kind IN ('customer','supplier')), name TEXT NOT NULL, phone TEXT, email TEXT, trn TEXT, address TEXT, terms_days REAL, default_account TEXT REFERENCES accounts(code), peppol_id TEXT, currency TEXT, price_list TEXT);
 CREATE TABLE vouchers (id TEXT PRIMARY KEY, no TEXT NOT NULL UNIQUE, type TEXT NOT NULL, date TEXT NOT NULL, due TEXT, contact_id TEXT REFERENCES contacts(id), payee TEXT, ref TEXT, memo TEXT,
   pay_account TEXT REFERENCES accounts(code), to_account TEXT REFERENCES accounts(code), amount REAL, vat_inclusive INTEGER, first_in_day INTEGER, created TEXT, updated TEXT,
-  branch TEXT, currency TEXT, fx_rate REAL, einvoice TEXT, recurring_id TEXT);
+  branch TEXT, currency TEXT, fx_rate REAL, einvoice TEXT, recurring_id TEXT, linked_id TEXT, status TEXT, approval TEXT);
 CREATE TABLE voucher_items (voucher_id TEXT NOT NULL REFERENCES vouchers(id) ON DELETE CASCADE, line INTEGER NOT NULL, account TEXT REFERENCES accounts(code), description TEXT, qty REAL, rate REAL, amount REAL,
   vat_code TEXT, vat_pct REAL, debit REAL, credit REAL, contact_id TEXT REFERENCES contacts(id), staff_id TEXT REFERENCES employees(id),
-  product_id TEXT, unit_cost REAL, asset_id TEXT, branch TEXT, PRIMARY KEY (voucher_id, line));
+  product_id TEXT, unit_cost REAL, asset_id TEXT, branch TEXT, source_line INTEGER, location TEXT, to_location TEXT, unit TEXT, batch TEXT, expiry TEXT, PRIMARY KEY (voucher_id, line));
 CREATE TABLE allocations (voucher_id TEXT NOT NULL REFERENCES vouchers(id) ON DELETE CASCADE, document_id TEXT NOT NULL REFERENCES vouchers(id), amount REAL NOT NULL);
 CREATE TABLE bank_statement (id TEXT PRIMARY KEY, account TEXT REFERENCES accounts(code), date TEXT NOT NULL, description TEXT, amount REAL NOT NULL, balance REAL, seq INTEGER, matched_voucher_id TEXT REFERENCES vouchers(id));
 CREATE TABLE reconciliations (id TEXT PRIMARY KEY, account TEXT REFERENCES accounts(code), date TEXT NOT NULL, book_balance REAL, actual_balance REAL, difference REAL, note TEXT, user TEXT, saved_at TEXT);
@@ -4554,7 +5324,7 @@ CREATE TABLE payroll_lines (run_id TEXT NOT NULL REFERENCES payroll_runs(id) ON 
 CREATE TABLE staff_advances (id TEXT PRIMARY KEY, employee_id TEXT NOT NULL REFERENCES employees(id), date TEXT NOT NULL, amount REAL NOT NULL, account TEXT REFERENCES accounts(code), journal_id TEXT REFERENCES vouchers(id), note TEXT);
 CREATE TABLE branches (id TEXT PRIMARY KEY, code TEXT, name TEXT NOT NULL);
 CREATE TABLE currencies (code TEXT PRIMARY KEY, name TEXT, rate REAL NOT NULL);
-CREATE TABLE products (id TEXT PRIMARY KEY, sku TEXT, name TEXT NOT NULL, unit TEXT, sale_price REAL, cost REAL, vat_code TEXT, income_account TEXT, reorder_level REAL, active INTEGER, notes TEXT);
+CREATE TABLE products (id TEXT PRIMARY KEY, sku TEXT, name TEXT NOT NULL, unit TEXT, sale_price REAL, cost REAL, vat_code TEXT, income_account TEXT, reorder_level REAL, active INTEGER, notes TEXT, alt_unit TEXT, alt_factor REAL, track_batches INTEGER, reorder_qty REAL);
 CREATE TABLE fixed_assets (id TEXT PRIMARY KEY, code TEXT, name TEXT NOT NULL, account TEXT, purchase_date TEXT, cost REAL, salvage REAL, life_months INTEGER, start_month TEXT, location TEXT, branch TEXT,
   status TEXT, disposal_date TEXT, disposal_proceeds REAL, disposal_voucher_id TEXT, notes TEXT);
 CREATE TABLE cheques (id TEXT PRIMARY KEY, kind TEXT, contact_id TEXT, cheque_no TEXT, bank TEXT, received_date TEXT, cheque_date TEXT, amount REAL, account TEXT, status TEXT,
@@ -4564,6 +5334,9 @@ CREATE TABLE budgets (year INTEGER, account TEXT, branch TEXT, m1 REAL, m2 REAL,
 CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL, pin_hash TEXT, active INTEGER);
 -- read-only: every stock movement with the running quantity and value
 CREATE TABLE stock_moves (date TEXT, voucher_id TEXT, entry_no TEXT, type TEXT, product_id TEXT, sku TEXT, product TEXT, qty REAL, value REAL, qty_after REAL, value_after REAL);
+CREATE TABLE locations (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+CREATE TABLE price_lists (id TEXT PRIMARY KEY, name TEXT NOT NULL, prices TEXT);
+CREATE TABLE edit_log (time TEXT, user TEXT, action TEXT, voucher_id TEXT, entry_no TEXT, type TEXT, before_json TEXT, after_json TEXT);
 CREATE TABLE audit_log (time TEXT, user TEXT, action TEXT, entry_no TEXT, details TEXT);
 -- read-only: every posted debit and credit, rebuilt on each save, for queries and reports
 CREATE TABLE journal_lines (date TEXT, voucher_id TEXT, entry_no TEXT, type TEXT, account TEXT, account_name TEXT, description TEXT, contact_id TEXT, debit REAL, credit REAL, branch TEXT);
@@ -4591,15 +5364,15 @@ function dbToSqliteBytes(){
     ins('accounts', ['code','name','type','role','active','ct_treatment'], DB.accounts.map(a => [a.code, a.name, a.type, a.role || '', a.active === false ? 0 : 1, a.ct || '']));
     ins('employees', ['id','code','name','position','department','phone','joined','left_on','basic','housing','transport','other','pay_mode','bank','iban','labour_id','notes','commission_pct','commission_target','commission_basis','product_commission_pct','final_settlement','branch','bank_routing'],
       DB.employees.map(e => [e.id, e.code||'', e.name, e.title||'', e.dept||'', e.phone||'', nz(e.join), nz(e.left), +e.basic||0, +e.housing||0, +e.transport||0, +e.other||0, e.payMode||'Bank', e.bank||'', e.iban||'', e.labourId||'', e.notes||'', +e.commPct||0, +e.target||0, e.commBasis||'above', +e.prodPct||0, e.settle ? JSON.stringify(e.settle) : null, e.branch || '', e.routing || '']));
-    ins('contacts', ['id','kind','name','phone','email','trn','address','terms_days','default_account','peppol_id','currency'], DB.contacts.map(c => [c.id, c.kind, c.name, c.phone||'', c.email||'', c.trn||'', c.address||'', +c.terms||0, nz(c.cat), c.peppol||'', c.cur||'']));
-    ins('vouchers', ['id','no','type','date','due','contact_id','payee','ref','memo','pay_account','to_account','amount','vat_inclusive','first_in_day','created','updated','branch','currency','fx_rate','einvoice','recurring_id'],
-      sortedVouchers().map(v => [v.id, v.no, v.type, v.date, nz(v.due), nz(v.party), v.pname||'', v.ref||'', v.memo||'', nz(v.payAcc), nz(v.toAcc), +v.amount||0, v.incl ? 1 : 0, v.first ? 1 : 0, v.created||'', v.updated||'', v.branch||'', v.cur||'', +v.fx||1, v.einv ? JSON.stringify(v.einv) : null, v.recur||'']));
+    ins('contacts', ['id','kind','name','phone','email','trn','address','terms_days','default_account','peppol_id','currency','price_list'], DB.contacts.map(c => [c.id, c.kind, c.name, c.phone||'', c.email||'', c.trn||'', c.address||'', +c.terms||0, nz(c.cat), c.peppol||'', c.cur||'', c.priceList||'']));
+    ins('vouchers', ['id','no','type','date','due','contact_id','payee','ref','memo','pay_account','to_account','amount','vat_inclusive','first_in_day','created','updated','branch','currency','fx_rate','einvoice','recurring_id','linked_id','status','approval'],
+      sortedVouchers().map(v => [v.id, v.no, v.type, v.date, nz(v.due), nz(v.party), v.pname||'', v.ref||'', v.memo||'', nz(v.payAcc), nz(v.toAcc), +v.amount||0, v.incl ? 1 : 0, v.first ? 1 : 0, v.created||'', v.updated||'', v.branch||'', v.cur||'', +v.fx||1, v.einv ? JSON.stringify(v.einv) : null, v.recur||'', v.link||'', v.status||'', v.appr||'']));
     const items = [], alloc = [];
     for(const v of DB.vouchers){
-      v.items.forEach((i,n) => items.push([v.id, n+1, nz(i.acc), i.desc||'', i.qty ?? null, i.rate ?? null, i.amount ?? null, nz(i.vat), i.vr ?? null, i.dr ?? null, i.cr ?? null, nz(i.party), nz(i.staff), i.product || null, i.cost ?? null, i.asset || null, i.branch || null]));
+      v.items.forEach((i,n) => items.push([v.id, n+1, nz(i.acc), i.desc||'', i.qty ?? null, i.rate ?? null, i.amount ?? null, nz(i.vat), i.vr ?? null, i.dr ?? null, i.cr ?? null, nz(i.party), nz(i.staff), i.product || null, i.cost ?? null, i.asset || null, i.branch || null, i.src ?? null, i.loc || null, i.toLoc || null, i.uom || null, i.batch || null, i.exp || null]));
       (v.alloc||[]).forEach(a => alloc.push([v.id, a.doc, +a.amt]));
     }
-    ins('voucher_items', ['voucher_id','line','account','description','qty','rate','amount','vat_code','vat_pct','debit','credit','contact_id','staff_id','product_id','unit_cost','asset_id','branch'], items);
+    ins('voucher_items', ['voucher_id','line','account','description','qty','rate','amount','vat_code','vat_pct','debit','credit','contact_id','staff_id','product_id','unit_cost','asset_id','branch','source_line','location','to_location','unit','batch','expiry'], items);
     ins('allocations', ['voucher_id','document_id','amount'], alloc);
     ins('bank_statement', ['id','account','date','description','amount','balance','seq','matched_voucher_id'], DB.statement.map(s => [s.id, s.acc, s.date, s.desc||'', +s.amount, s.bal == null ? null : +s.bal, +s.seq||0, nz(s.match)]));
     ins('reconciliations', ['id','account','date','book_balance','actual_balance','difference','note','user','saved_at'], DB.recons.map(r => [r.id, r.acc, r.date, +r.book, +r.actual, +r.diff, r.note||'', r.user||'', r.t||'']));
@@ -4612,13 +5385,16 @@ function dbToSqliteBytes(){
     const J = x => x == null ? null : JSON.stringify(x);
     ins('branches', ['id','code','name'], DB.branches.map(b => [b.id, b.code||'', b.name]));
     ins('currencies', ['code','name','rate'], DB.currencies.map(c => [c.code, c.name||'', +c.rate||1]));
-    ins('products', ['id','sku','name','unit','sale_price','cost','vat_code','income_account','reorder_level','active','notes'], DB.products.map(p => [p.id, p.sku||'', p.name, p.unit||'', +p.price||0, +p.cost||0, p.vat||'SR', p.acc||'4100', +p.reorder||0, p.active === false ? 0 : 1, p.notes||'']));
+    ins('products', ['id','sku','name','unit','sale_price','cost','vat_code','income_account','reorder_level','active','notes','alt_unit','alt_factor','track_batches','reorder_qty'], DB.products.map(p => [p.id, p.sku||'', p.name, p.unit||'', +p.price||0, +p.cost||0, p.vat||'SR', p.acc||'4100', +p.reorder||0, p.active === false ? 0 : 1, p.notes||'', p.altUnit||'', +p.altFactor||0, p.batches ? 1 : 0, +p.reorderQty||0]));
     ins('fixed_assets', ['id','code','name','account','purchase_date','cost','salvage','life_months','start_month','location','branch','status','disposal_date','disposal_proceeds','disposal_voucher_id','notes'],
       DB.assets.map(a => [a.id, a.code||'', a.name, a.acc||'1500', a.date||'', +a.cost||0, +a.salvage||0, +a.life||60, a.start||'', a.location||'', a.branch||'', a.status||'Active', a.disposedOn||'', +a.proceeds||0, a.disposalJv||'', a.notes||'']));
     ins('cheques', ['id','kind','contact_id','cheque_no','bank','received_date','cheque_date','amount','account','status','voucher_id','reversal_id','documents','note','history'],
       DB.cheques.map(c => [c.id, c.kind, nz(c.party), c.no||'', c.bank||'', c.received||'', c.date||'', +c.amount||0, c.acc||'', c.status||'Pending', c.voucher||'', c.reversal||'', J(c.docs||[]), c.note||'', J(c.history||[])]));
     ins('recurring', ['id','name','frequency','next_date','end_date','active','last_posted','template'], DB.recurring.map(r => [r.id, r.name, r.freq, r.next||'', r.end||'', r.active === false ? 0 : 1, r.last||'', J(r.tpl)]));
     ins('budgets', ['year','account','branch','m1','m2','m3','m4','m5','m6','m7','m8','m9','m10','m11','m12'], DB.budgets.map(b => [+b.year, b.acc, b.branch||'', ...Array.from({length:12}, (_,i) => +(b.m||[])[i]||0)]));
+    ins('locations', ['id','name'], DB.locations.map(l => [l.id, l.name]));
+    ins('price_lists', ['id','name','prices'], DB.priceLists.map(l => [l.id, l.name, JSON.stringify(l.prices || {})]));
+    ins('edit_log', ['time','user','action','voucher_id','entry_no','type','before_json','after_json'], DB.editlog.map(x => [x.t, x.user, x.act, x.id, x.no, x.type, x.before ? JSON.stringify(x.before) : null, x.after ? JSON.stringify(x.after) : null]));
     ins('users', ['id','name','role','pin_hash','active'], DB.users.map(u => [u.id, u.name, u.role, u.pin||'', u.active === false ? 0 : 1]));
     if(typeof stockCalc === 'function'){ const S = stockCalc(); const sm = [];
       for(const [pid, x] of Object.entries(S.P)){ const p = productById(pid); for(const m of x.moves) sm.push([m.date, m.v.id, m.v.no, m.v.type, pid, p?.sku||'', p?.name||'', m.dq, m.dv, m.qty, m.val]); }
@@ -4644,16 +5420,18 @@ function sqliteToDB(bytes){
       if(typeof d === 'number') v = num(v); else if(typeof d === 'boolean' || v === 'true' || v === 'false') v = v === 'true' || v === '1'; else v = s(v);
       out.settings[r.key] = v; }
     out.accounts = all('SELECT * FROM accounts ORDER BY code').map(r => ({code:s(r.code), name:s(r.name), type:s(r.type), role:s(r.role), active: r.active !== 0, ct: s(r.ct_treatment)}));
-    out.contacts = all('SELECT * FROM contacts').map(r => ({id:s(r.id), kind:s(r.kind), name:s(r.name), phone:s(r.phone), email:s(r.email), trn:s(r.trn), address:s(r.address), terms:n(r.terms_days), cat:s(r.default_account), peppol:s(r.peppol_id), cur:s(r.currency)}));
+    out.contacts = all('SELECT * FROM contacts').map(r => ({id:s(r.id), kind:s(r.kind), name:s(r.name), phone:s(r.phone), email:s(r.email), trn:s(r.trn), address:s(r.address), terms:n(r.terms_days), cat:s(r.default_account), peppol:s(r.peppol_id), cur:s(r.currency), priceList:s(r.price_list)}));
     const byId = {};
     for(const r of all('SELECT * FROM vouchers ORDER BY rowid')){ const v = {id:s(r.id), no:s(r.no), type:s(r.type), date:s(r.date), due:s(r.due), party:s(r.contact_id), pname:s(r.payee), ref:s(r.ref), memo:s(r.memo),
       payAcc:s(r.pay_account), toAcc:s(r.to_account), amount:r2(n(r.amount)), incl:r.vat_inclusive === 1, first:r.first_in_day === 1, created:s(r.created), updated:s(r.updated), items:[], alloc:[]};
       if(r.branch) v.branch = s(r.branch); if(r.currency) v.cur = s(r.currency); if(r.fx_rate != null && +r.fx_rate !== 1) v.fx = +r.fx_rate; if(r.recurring_id) v.recur = s(r.recurring_id);
-      if(r.einvoice){ try{ v.einv = JSON.parse(r.einvoice); }catch(e){} } byId[v.id] = v; out.vouchers.push(v); }
+      if(r.einvoice){ try{ v.einv = JSON.parse(r.einvoice); }catch(e){} }
+      if(r.linked_id) v.link = s(r.linked_id); if(r.status) v.status = s(r.status); if(r.approval) v.appr = s(r.approval); byId[v.id] = v; out.vouchers.push(v); }
     for(const r of all('SELECT * FROM voucher_items ORDER BY voucher_id, line')){ const v = byId[r.voucher_id]; if(!v) continue; const it = {acc:s(r.account), desc:s(r.description)};
       if(r.qty != null) it.qty = +r.qty; if(r.rate != null) it.rate = +r.rate; if(r.amount != null) it.amount = r2(+r.amount); if(r.vat_code) it.vat = s(r.vat_code); if(r.vat_pct != null) it.vr = +r.vat_pct;
       if(r.debit != null || r.credit != null){ it.dr = r2(n(r.debit)); it.cr = r2(n(r.credit)); } if(r.contact_id) it.party = s(r.contact_id); if(r.staff_id) it.staff = s(r.staff_id);
-      if(r.product_id) it.product = s(r.product_id); if(r.unit_cost != null) it.cost = +r.unit_cost; if(r.asset_id) it.asset = s(r.asset_id); if(r.branch) it.branch = s(r.branch); v.items.push(it); }
+      if(r.product_id) it.product = s(r.product_id); if(r.unit_cost != null) it.cost = +r.unit_cost; if(r.asset_id) it.asset = s(r.asset_id); if(r.branch) it.branch = s(r.branch);
+      if(r.source_line != null) it.src = +r.source_line; if(r.location) it.loc = s(r.location); if(r.to_location) it.toLoc = s(r.to_location); if(r.unit) it.uom = s(r.unit); if(r.batch) it.batch = s(r.batch); if(r.expiry) it.exp = s(r.expiry); v.items.push(it); }
     for(const r of all('SELECT * FROM allocations')){ const v = byId[r.voucher_id]; if(v) v.alloc.push({doc:s(r.document_id), amt:r2(n(r.amount))}); }
     out.statement = all('SELECT * FROM bank_statement').map(r => ({id:s(r.id), acc:s(r.account), date:s(r.date), desc:s(r.description), amount:r2(n(r.amount)), bal: r.balance == null ? null : r2(+r.balance), seq:n(r.seq), match:s(r.matched_voucher_id)}));
     out.recons = all('SELECT * FROM reconciliations').map(r => ({id:s(r.id), acc:s(r.account), date:s(r.date), book:n(r.book_balance), actual:n(r.actual_balance), diff:n(r.difference), note:s(r.note), user:s(r.user), t:s(r.saved_at)}));
@@ -4670,13 +5448,16 @@ function sqliteToDB(bytes){
     const P = t => { try{ return JSON.parse(t); }catch(e){ return null; } };
     if(has('branches')) out.branches = all('SELECT * FROM branches').map(r => ({id:s(r.id), code:s(r.code), name:s(r.name)}));
     if(has('currencies')) out.currencies = all('SELECT * FROM currencies').map(r => ({code:s(r.code), name:s(r.name), rate:n(r.rate) || 1}));
-    if(has('products')) out.products = all('SELECT * FROM products').map(r => ({id:s(r.id), sku:s(r.sku), name:s(r.name), unit:s(r.unit), price:n(r.sale_price), cost:n(r.cost), vat:s(r.vat_code)||'SR', acc:s(r.income_account)||'4100', reorder:n(r.reorder_level), active:r.active !== 0, notes:s(r.notes)}));
+    if(has('products')) out.products = all('SELECT * FROM products').map(r => ({id:s(r.id), sku:s(r.sku), name:s(r.name), unit:s(r.unit), price:n(r.sale_price), cost:n(r.cost), vat:s(r.vat_code)||'SR', acc:s(r.income_account)||'4100', reorder:n(r.reorder_level), active:r.active !== 0, notes:s(r.notes), altUnit:s(r.alt_unit), altFactor:n(r.alt_factor), batches:r.track_batches === 1, reorderQty:n(r.reorder_qty)}));
     if(has('fixed_assets')) out.assets = all('SELECT * FROM fixed_assets').map(r => ({id:s(r.id), code:s(r.code), name:s(r.name), acc:s(r.account)||'1500', date:s(r.purchase_date), cost:n(r.cost), salvage:n(r.salvage), life:n(r.life_months)||60, start:s(r.start_month),
       location:s(r.location), branch:s(r.branch), status:s(r.status)||'Active', disposedOn:s(r.disposal_date), proceeds:n(r.disposal_proceeds), disposalJv:s(r.disposal_voucher_id), notes:s(r.notes)}));
     if(has('cheques')) out.cheques = all('SELECT * FROM cheques').map(r => ({id:s(r.id), kind:s(r.kind), party:s(r.contact_id), no:s(r.cheque_no), bank:s(r.bank), received:s(r.received_date), date:s(r.cheque_date), amount:n(r.amount), acc:s(r.account),
       status:s(r.status)||'Pending', voucher:s(r.voucher_id), reversal:s(r.reversal_id), docs:P(r.documents)||[], note:s(r.note), history:P(r.history)||[]}));
     if(has('recurring')) out.recurring = all('SELECT * FROM recurring').map(r => ({id:s(r.id), name:s(r.name), freq:s(r.frequency)||'monthly', next:s(r.next_date), end:s(r.end_date), active:r.active !== 0, last:s(r.last_posted), tpl:P(r.template)||{}}));
     if(has('budgets')) out.budgets = all('SELECT * FROM budgets').map(r => ({year:n(r.year), acc:s(r.account), branch:s(r.branch), m:Array.from({length:12}, (_,i) => n(r['m' + (i+1)]))}));
+    if(has('locations')) out.locations = all('SELECT * FROM locations').map(r => ({id:s(r.id), name:s(r.name)}));
+    if(has('price_lists')) out.priceLists = all('SELECT * FROM price_lists').map(r => ({id:s(r.id), name:s(r.name), prices:P(r.prices) || {}}));
+    if(has('edit_log')) out.editlog = all('SELECT * FROM edit_log ORDER BY rowid').map(r => ({t:s(r.time), user:s(r.user), act:s(r.action), id:s(r.voucher_id), no:s(r.entry_no), type:s(r.type), before:P(r.before_json), after:P(r.after_json)}));
     if(has('users')) out.users = all('SELECT * FROM users').map(r => ({id:s(r.id), name:s(r.name), role:s(r.role), pin:s(r.pin_hash), active:r.active !== 0}));
     out.audit = all('SELECT * FROM audit_log ORDER BY rowid').map(r => ({t:s(r.time), user:s(r.user), act:s(r.action), no:s(r.entry_no), info:s(r.details)}));
     return out;
