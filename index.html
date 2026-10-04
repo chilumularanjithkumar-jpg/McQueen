@@ -449,6 +449,7 @@ kbd{display:inline-block;border:1px solid var(--line);border-bottom-width:2px;bo
 .lic-bar.warn{background:var(--gold-soft);color:var(--ink);border:1px solid #E3D3AE} .lic-bar.bad{background:#7E2335;color:#fff}
 .lic-bar button{all:unset;cursor:pointer;font-weight:700;text-decoration:underline}
 @media print{.lic-bar{display:none}}
+#licBox{z-index:80}
 </style>
 </head>
 <body>
@@ -5339,7 +5340,7 @@ function migRead(wb){
     out.rows[k] = []; const ws = wb.Sheets[s.sheet]; if(!ws) continue;
     const a = XLSX.utils.sheet_to_json(ws, {header:1, raw:true, defval:''}), first = migNorm(Object.values(s.cols)[0]);
     const hi = a.findIndex(r => r.some(c => migNorm(c) === first)); if(hi < 0) continue; out.sheets++;
-    const idx = {}; for(const [key, h] of Object.entries(s.cols)) idx[key] = a[hi].findIndex(c => migNorm(c) === migNorm(h));
+    const idx = {}; for(const [key, h] of Object.entries(s.cols)) idx[key] = a[hi].findIndex(c => migNorm(c) === migNorm(h)); idx._id = a[hi].findIndex(c => migNorm(c) === 'id (system)');
     for(let i = hi + 1; i < a.length; i++){ const r = a[i], cells = r.map(migStr).filter(Boolean); if(!cells.length || /^e\.g\./i.test(cells[0])) continue;
       const o = {_row:i + 1}; for(const [key, j] of Object.entries(idx)) o[key] = j >= 0 ? r[j] : ''; out.rows[k].push(o); }
   }
@@ -5352,6 +5353,11 @@ function migCheck(data, asOf){
   const E = [], W = [], err = (k, r, m) => E.push({s:MIG[k].sheet, r:r._row, m}), warn = (k, r, m) => W.push({s:k ? MIG[k].sheet : '', r:r ? r._row : '', m});
   const R = data.rows, P = {asOf, accounts:[], open:[], contacts:[], docs:[], products:[], locs:[], stock:[], emps:[], advs:[], assets:[], assetLines:[], jvs:[], skip:{}};
   const obe = roleAcc('obe') || '3050', skip = k => P.skip[k] = (P.skip[k] || 0) + 1;
+  /* existing records: only filled cells that differ are changed; empty cells keep the current value */
+  P.updates = []; P.upd = {}; const has = v => migStr(v) !== '';
+  const chg = (k, r, target, label, pairs) => { const c = {}, names = [];
+    for(const [f, v, h] of pairs){ if(v === undefined) continue; const cur = target[f], same = typeof v === 'number' ? Math.abs((+cur || 0) - v) < 0.005 : typeof v === 'boolean' ? (cur !== false) === v : String(cur ?? '') === String(v); if(!same){ c[f] = v; names.push(h); } }
+    if(names.length){ P.updates.push({k, r:r._row, target, label, changes:c, names}); P.upd[k] = (P.upd[k] || 0) + 1; } else skip(k); };
   if(asOf && lockedDate(asOf)) E.push({s:'Read me', r:'', m:`${dLong(asOf)} is in a locked period (Settings → VAT, tax and period lock).`});
 
   /* accounts */
@@ -5364,7 +5370,10 @@ function migCheck(data, asOf){
       if(kind && !['cash','bank'].includes(kind)) { err('accounts', r, '"Cash or bank" must be Cash, Bank or empty.'); continue; }
       if(kind && t !== 'asset') { err('accounts', r, `Account ${code} is marked ${kind} but is not an asset.`); continue; }
       newAcc[code] = {code, name, type:t, role:kind || '', active:true}; P.accounts.push(newAcc[code]); }
-    else if(t && acc(code).type !== t) warn('accounts', r, `Account ${code} already exists as ${ACC_TYPES[acc(code).type]}; kept as it is.`);
+    else { const a0 = acc(code); if(t && a0.type !== t) warn('accounts', r, `Account ${code} already exists as ${ACC_TYPES[a0.type]}; its type is not changed.`);
+      if(kind && !['cash','bank'].includes(kind)) { err('accounts', r, '"Cash or bank" must be Cash, Bank or empty.'); continue; }
+      const kindOK = kind && a0.type === 'asset' && ['', 'cash', 'bank'].includes(a0.role || ''); if(kind && !kindOK) warn('accounts', r, `${code} cannot be marked ${kind}; kept as it is.`);
+      chg('accounts', r, a0, code + ' ' + a0.name, [['name', name || undefined, 'name'], ['role', kindOK ? kind : undefined, 'cash or bank']]); }
     const dr = migNum(r.dr), cr = migNum(r.cr); if(isNaN(dr) || isNaN(cr)) { err('accounts', r, `Opening balance of ${code} is not a number.`); continue; }
     const net = r2(dr - cr); if(!net) continue; r._code = code; r._net = net; }
   const assetAccs = new Set(R.assets.map(r => migStr(r.acc).replace(/\.0+$/, '') || '1500'));
@@ -5379,8 +5388,17 @@ function migCheck(data, asOf){
   const findC = (kind, name) => DB.contacts.find(c => c.kind === kind && nameKey(c.name) === nameKey(name)) || P.contacts.find(c => c.kind === kind && nameKey(c.name) === nameKey(name));
   for(const [k, kind] of [['customers','customer'], ['suppliers','supplier']]){ const dup = {};
     for(const r of R[k]){ const name = migStr(r.name); if(!name) { err(k, r, 'Name is missing.'); continue; }
-      if(dup[nameKey(name)]) { err(k, r, `${name} is listed twice (also row ${dup[nameKey(name)]}).`); continue; } dup[nameKey(name)] = r._row;
-      if(findC(kind, name)) { skip(k); continue; }
+      const dk = has(r._id) ? 'id:' + migStr(r._id) : nameKey(name); if(dup[dk]) { err(k, r, `${name} is listed twice (also row ${dup[dk]}).`); continue; } dup[dk] = r._row;
+      const ex = (has(r._id) && DB.contacts.find(c => c.id === migStr(r._id) && c.kind === kind)) || DB.contacts.find(c => c.kind === kind && nameKey(c.name) === nameKey(name));
+      if(ex){ const tm = has(r.terms) ? migNum(r.terms) : undefined; if(tm !== undefined && (isNaN(tm) || tm < 0)) { err(k, r, 'Payment terms must be a number of days.'); continue; }
+        if(nameKey(ex.name) !== nameKey(name) && DB.contacts.some(c => c !== ex && c.kind === kind && nameKey(c.name) === nameKey(name))) { err(k, r, `Cannot rename ${ex.name} to ${name}: that name is already used.`); continue; }
+        const pairs = [['name', name, 'name'], ['phone', has(r.phone) ? migStr(r.phone) : undefined, 'phone'], ['email', has(r.email) ? migStr(r.email) : undefined, 'email'], ['trn', has(r.trn) ? migStr(r.trn).replace(/\.0+$/, '') : undefined, 'TRN'],
+          ['address', has(r.address) ? migStr(r.address) : undefined, 'address'], ['terms', tm, 'terms']];
+        if(kind === 'customer'){ const cur = migStr(r.cur).toUpperCase(); if(cur){ if(cur === DB.settings.cur) pairs.push(['cur', '', 'currency']); else if(DB.currencies.some(x => x.code === cur)) pairs.push(['cur', cur, 'currency']); else warn(k, r, `Currency ${cur} is not set up; kept as it is.`); }
+          if(has(r.peppol)) pairs.push(['peppol', migStr(r.peppol), 'Peppol ID']);
+          const pl = migStr(r.pl); if(pl){ const L = DB.priceLists.find(x => nameKey(x.name) === nameKey(pl)); if(L) pairs.push(['priceList', L.id, 'price list']); else warn(k, r, `Price list "${pl}" does not exist; kept as it is.`); } }
+        else { const a = migStr(r.cat).replace(/\.0+$/, ''); if(a){ if(codeOK(a)) pairs.push(['cat', a, 'usual account']); else warn(k, r, `Account ${a} does not exist; kept as it is.`); } }
+        chg(k, r, ex, ex.name, pairs); continue; }
       const terms = migStr(r.terms) === '' ? +DB.settings.terms || 30 : migNum(r.terms); if(isNaN(terms) || terms < 0) { err(k, r, 'Payment terms must be a number of days.'); continue; }
       const c = {id:uid('c'), kind, name, phone:migStr(r.phone), email:migStr(r.email), trn:migStr(r.trn).replace(/\.0+$/, ''), address:migStr(r.address), terms, cat:''};
       if(c.trn && !/^\d{15}$/.test(c.trn.replace(/\s/g, ''))) warn(k, r, `TRN of ${name} is not 15 digits; kept as entered.`);
@@ -5397,6 +5415,7 @@ function migCheck(data, asOf){
     for(const r of R[k]){ const name = migStr(r.party), no = migStr(r.no).replace(/\.0+$/, ''), date = migDate(r.date), due = migDate(r.due), amt = r2(migNum(r.amt));
       if(!name) { err(k, r, 'Name is missing.'); continue; } if(!no) { err(k, r, 'Document number is missing.'); continue; }
       if(!date) { err(k, r, `Date of ${no} is missing or not a date (use dd/mm/yyyy).`); continue; } if(due === null) { err(k, r, `Due date of ${no} is not a date.`); continue; }
+      { const c0 = findC(kind, name); if(c0 && DB.vouchers.some(v => [T, Tneg].includes(v.type) && v.party === c0.id && (v.ref === no || v.no === no))) { skip(k); continue; } }
       if(isNaN(amt) || !amt) { err(k, r, `Amount due on ${no} is missing or not a number.`); continue; }
       if(asOf && date > asOf) { err(k, r, `${no} is dated after ${dLong(asOf)}. Enter it in the app as a normal ${kind === 'customer' ? 'invoice' : 'bill'} instead.`); continue; }
       const key = nameKey(name) + '|' + no; if(dup[key]) { err(k, r, `${no} for ${name} is listed twice (also row ${dup[key]}).`); continue; } dup[key] = r._row;
@@ -5406,7 +5425,7 @@ function migCheck(data, asOf){
 
   /* stock items and opening stock */
   const salesOK = c => codeOK(c) && accType(c) === 'income', pKey = r => migStr(r.sku) ? 'sku:' + migNorm(r.sku) : 'name:' + nameKey(r.name);
-  const findP = r => (migStr(r.sku) && DB.products.find(p => migNorm(p.sku) === migNorm(r.sku))) || DB.products.find(p => nameKey(p.name) === nameKey(r.name));
+  const findP = r => (has(r._id) && DB.products.find(p => p.id === migStr(r._id))) || (migStr(r.sku) && DB.products.find(p => migNorm(p.sku) === migNorm(r.sku))) || DB.products.find(p => nameKey(p.name) === nameKey(r.name));
   const newP = {}, stockDone = DB.vouchers.some(v => v.type === 'ADJ' && v.ref === 'MIG-STOCK'), VATK = {sr:'SR', zr:'ZR', ex:'EX', na:'NA', 'standard rated':'SR', 'zero rated':'ZR', exempt:'EX', 'no vat':'NA', '':'SR'};
   for(const r of R.stock){ const name = migStr(r.name); if(!name) { err('stock', r, 'Item name is missing.'); continue; }
     const price = migNum(r.price), cost = migNum(r.cost), qty = migNum(r.qty), reorder = migNum(r.reorder), vat = VATK[migNorm(r.vat)], sacc = migStr(r.acc).replace(/\.0+$/, '') || '4100', exp = migDate(r.exp);
@@ -5415,7 +5434,9 @@ function migCheck(data, asOf){
     if(exp === null) { err('stock', r, `Expiry date of ${name} is not a date.`); continue; } if(qty < 0) { err('stock', r, `Opening quantity of ${name} is negative.`); continue; }
     const k = pKey(r); let p = findP(r) || newP[k], fresh = false;
     if(!p){ p = newP[k] = {id:uid('p'), sku:migStr(r.sku), name, unit:migStr(r.unit) || 'pcs', price:r2(price), cost:r2(cost), vat, acc:sacc, reorder, active:true, notes:'Imported', altUnit:'', altFactor:0, batches:false, reorderQty:0}; P.products.push(p); fresh = true; }
-    else if(!P.products.includes(p)) skip('stock');
+    else if(!P.products.includes(p) && !(P._seenP ||= new Set()).has(p.id)){ P._seenP.add(p.id); const v0 = has(r.vat) ? vat : undefined, a0 = has(r.acc) ? sacc : undefined;
+      chg('stock', r, p, p.name, [['sku', has(r.sku) ? migStr(r.sku) : undefined, 'SKU'], ['name', name, 'name'], ['unit', has(r.unit) ? migStr(r.unit) : undefined, 'unit'], ['price', has(r.price) ? r2(price) : undefined, 'price'],
+        ['cost', has(r.cost) ? r2(cost) : undefined, 'cost'], ['vat', v0, 'VAT code'], ['acc', a0, 'sales account'], ['reorder', has(r.reorder) ? reorder : undefined, 'reorder level']]); }
     if(!fresh && P.products.includes(p) && newP[k] === p && (migStr(r.price) || migStr(r.unit)) && (r2(price) !== p.price || (migStr(r.unit) && migStr(r.unit) !== p.unit))) warn('stock', r, `${name} appears again with a different price or unit; the first row is used.`);
     if(!qty) continue;
     if(stockDone) { warn('stock', r, 'Opening stock was imported before; quantities are not added again.'); continue; }
@@ -5430,12 +5451,20 @@ function migCheck(data, asOf){
   { const dup = {};
   for(const r of R.employees){ const code = migStr(r.code).replace(/\.0+$/, ''), name = migStr(r.name), join = migDate(r.join), nums = ['basic','housing','transport','other','commPct','target','prodPct','adv'].map(f => [f, migNum(r[f])]);
     if(!code) { err('employees', r, 'Employee code is missing.'); continue; } if(dup[code]) { err('employees', r, `Code ${code} is listed twice (also row ${dup[code]}).`); continue; } dup[code] = r._row;
+    const bad = nums.find(([, n]) => isNaN(n) || n < 0); if(bad) { err('employees', r, `${MIG.employees.cols[bad[0]]} of ${name || code} is not a number.`); continue; }
+    const ex = (has(r._id) && DB.employees.find(e => e.id === migStr(r._id))) || DB.employees.find(e => e.code === code);
+    if(ex){ const pm = migNorm(r.payMode), basis = has(r.commBasis) ? BASIS[migNorm(r.commBasis)] : undefined; if(has(r.join) && !join) { err('employees', r, `Joining date of ${ex.name} is not a date.`); continue; }
+      if(pm && !['bank','cash'].includes(pm)) { err('employees', r, '"Pay by" must be Bank or Cash.'); continue; } if(basis === null || (has(r.commBasis) && !basis)) { err('employees', r, 'Commission basis must be one of the choices in the list.'); continue; }
+      if(ex.code !== code && DB.employees.some(e => e !== ex && e.code === code)) { err('employees', r, `Code ${code} is already used by another employee.`); continue; }
+      const N = Object.fromEntries(nums), n = f => has(r[f]) ? r2(N[f]) : undefined, t = f => has(r[f]) ? migStr(r[f]).replace(/\.0+$/, '') : undefined;
+      chg('employees', r, ex, ex.name, [['code', code, 'code'], ['name', name || undefined, 'name'], ['title', t('title'), 'position'], ['dept', t('dept'), 'department'], ['phone', t('phone'), 'phone'], ['join', join || undefined, 'joining date'],
+        ['basic', n('basic'), 'basic'], ['housing', n('housing'), 'housing'], ['transport', n('transport'), 'transport'], ['other', n('other'), 'other allowance'], ['payMode', pm ? (pm === 'cash' ? 'Cash' : 'Bank') : undefined, 'pay by'],
+        ['bank', t('bank'), 'bank'], ['iban', t('iban'), 'IBAN'], ['routing', t('routing'), 'routing code'], ['labourId', t('labourId'), 'labour ID'], ['commPct', n('commPct'), 'commission %'], ['target', n('target'), 'target'], ['commBasis', basis && basis !== (ex.commBasis || 'above') ? basis : undefined, 'commission basis'], ['prodPct', n('prodPct'), 'product commission %']]);
+      if(N.adv) warn('employees', r, `${code} is already here; an advance is not added from the import. Give it from the employee's card.`); continue; }
     if(!name) { err('employees', r, `Name of ${code} is missing.`); continue; } if(!join) { err('employees', r, `Joining date of ${name} is missing or not a date.`); continue; }
-    const bad = nums.find(([, n]) => isNaN(n) || n < 0); if(bad) { err('employees', r, `${MIG.employees.cols[bad[0]]} of ${name} is not a number.`); continue; }
     const N = Object.fromEntries(nums); if(!(N.basic > 0)) { err('employees', r, `Basic salary of ${name} is missing.`); continue; }
     const pm = migNorm(r.payMode), basis = BASIS[migNorm(r.commBasis)]; if(pm && !['bank','cash'].includes(pm)) { err('employees', r, '"Pay by" must be Bank or Cash.'); continue; }
     if(!basis) { err('employees', r, 'Commission basis must be one of the choices in the list.'); continue; }
-    if(DB.employees.some(e => e.code === code)) { skip('employees'); if(N.adv) warn('employees', r, `${code} is already here; the advance is not added again.`); continue; }
     const e = {id:uid('e'), code, name, title:migStr(r.title), dept:migStr(r.dept), phone:migStr(r.phone), join, left:'', basic:r2(N.basic), housing:r2(N.housing), transport:r2(N.transport), other:r2(N.other),
       payMode: pm === 'cash' ? 'Cash' : 'Bank', bank:migStr(r.bank), iban:migStr(r.iban), routing:migStr(r.routing).replace(/\.0+$/, ''), labourId:migStr(r.labourId).replace(/\.0+$/, ''), notes:'Imported', commPct:N.commPct, target:N.target, commBasis:basis, prodPct:N.prodPct};
     if(e.payMode === 'Bank' && !e.iban) warn('employees', r, `${name} is paid by bank but has no IBAN (needed for the WPS file).`);
@@ -5444,7 +5473,15 @@ function migCheck(data, asOf){
   /* fixed assets */
   { const used = new Set(DB.assets.map(a => a.code)); let n = DB.assets.length;
   for(const r of R.assets){ const name = migStr(r.name), date = migDate(r.date), cost = migNum(r.cost), salvage = migNum(r.salvage), accum = migNum(r.accum), lifeIn = migStr(r.life), life = lifeIn ? migNum(r.life) : (+DB.settings.depYears || 5) * 12, a = migStr(r.acc).replace(/\.0+$/, '') || '1500';
-    if(!name) { err('assets', r, 'Asset name is missing.'); continue; } if(!date) { err('assets', r, `Purchase date of ${name} is missing or not a date.`); continue; }
+    if(!name) { err('assets', r, 'Asset name is missing.'); continue; }
+    { const code0 = migStr(r.code).replace(/\.0+$/, ''), ex = (has(r._id) && DB.assets.find(x => x.id === migStr(r._id))) || (code0 && DB.assets.find(x => x.code === code0)) || (!code0 && date && DB.assets.find(x => nameKey(x.name) === nameKey(name) && x.date === date && Math.abs((+x.cost || 0) - cost) < 0.005));
+      if(ex){ if((has(r.cost) && Math.abs((+ex.cost || 0) - cost) > 0.005) || (has(r.date) && date && date !== ex.date) || (has(r.acc) && a !== (ex.acc || '1500'))) warn('assets', r, `${ex.code}: cost, purchase date and account are posted in the books and are not changed by an import.`);
+        if(has(r.accum) && Math.abs(assetAccum(ex, todayISO()) - accum) > 0.005) warn('assets', r, `${ex.code}: depreciation to date comes from the books and is not changed by an import.`);
+        if(code0 && code0 !== ex.code && DB.assets.some(x => x !== ex && x.code === code0)) { err('assets', r, `Asset code ${code0} is already used.`); continue; }
+        if([salvage, life].some(x => isNaN(x) || x < 0) || (lifeIn && life < 1)) { err('assets', r, `Salvage or life of ${name} is not valid.`); continue; }
+        chg('assets', r, ex, ex.code + ' ' + ex.name, [['code', code0 || undefined, 'code'], ['name', name, 'name'], ['salvage', has(r.salvage) ? r2(salvage) : undefined, 'salvage'], ['life', lifeIn ? Math.round(life) : undefined, 'life'],
+          ['location', has(r.location) ? migStr(r.location) : undefined, 'location'], ['notes', has(r.notes) ? migStr(r.notes) : undefined, 'notes']]); continue; } }
+    if(!date) { err('assets', r, `Purchase date of ${name} is missing or not a date.`); continue; }
     if([cost, salvage, accum, life].some(x => isNaN(x) || x < 0)) { err('assets', r, `A number for ${name} is not valid.`); continue; } if(!(cost > 0)) { err('assets', r, `Cost of ${name} is missing.`); continue; }
     if(!(life >= 1)) { err('assets', r, `Life of ${name} must be at least 1 month.`); continue; }
     if(accum > cost - salvage + 0.005) { err('assets', r, `Depreciation to date of ${name} is more than its cost less salvage value.`); continue; }
@@ -5480,11 +5517,15 @@ function migCheck(data, asOf){
   P.users = []; if(R.users.length){ const RK = {}; for(const [k2, r0] of Object.entries(ROLES)) { RK[k2] = k2; RK[migNorm(r0.label)] = k2; } RK['hr'] = 'hr'; RK['payroll'] = 'hr'; const dup = {};
     for(const r of R.users){ const name = migStr(r.name), rl = RK[migNorm(r.role)], pin = migStr(r.pin).replace(/\.0+$/, ''), act = migNorm(r.active);
       if(!name) { err('users', r, 'User name is missing.'); continue; } if(dup[nameKey(name)]) { err('users', r, `${name} is listed twice.`); continue; } dup[nameKey(name)] = 1;
-      if(DB.users.some(u => nameKey(u.name) === nameKey(name))) { skip('users'); continue; }
+      const ex = (has(r._id) && DB.users.find(u => u.id === migStr(r._id))) || DB.users.find(u => nameKey(u.name) === nameKey(name));
+      if(ex){ if(has(r.role) && !rl) { err('users', r, `Role of ${name} must be Owner, Accountant, Cashier, HR / payroll or Viewer.`); continue; }
+        if(pin && !/^\d{4,8}$/.test(pin)) { err('users', r, `PIN of ${name} must be 4 to 8 digits.`); continue; }
+        chg('users', r, ex, ex.name, [['name', name, 'name'], ['role', rl || undefined, 'role'], ['active', act ? !['no','n','inactive','0','false'].includes(act) : undefined, 'active'], ['_pin', pin || undefined, 'PIN']]); continue; }
       if(!rl) { err('users', r, `Role of ${name} must be Owner, Accountant, Cashier, HR / payroll or Viewer.`); continue; }
       if(!/^\d{4,8}$/.test(pin)) { err('users', r, `PIN of ${name} must be 4 to 8 digits${/^\d{1,3}$/.test(pin) ? ' (a PIN starting with 0 loses its zeros if the column is not formatted as Text)' : ''}.`); continue; }
       P.users.push({id:uid('u'), name, role:rl, active: !['no','n','inactive','0','false'].includes(act), _pin:pin}); }
-    if(!DB.users.some(u => u.role === 'owner' && u.active !== false) && !P.users.some(u => u.role === 'owner' && u.active) && P.users.length) E.push({s:'Users', r:'', m:'Include at least one active Owner, or nobody could manage users afterwards.'});
+    const after = u => { const x = P.updates.find(c => c.target === u); return {...u, ...(x ? x.changes : {})}; };
+    if((P.users.length || P.updates.some(c => c.k === 'users')) && DB.users.length + P.users.length && !DB.users.map(after).some(u => u.role === 'owner' && u.active !== false) && !P.users.some(u => u.role === 'owner' && u.active)) E.push({s:'Users', r:'', m:'Include at least one active Owner, or nobody could manage users afterwards.'});
     if(P.users.length) W.push({s:'Users', r:'', m:'This file contains PINs. Delete it, or remove the PIN column, after importing.'}); }
 
   if(!asOf && (P.open.length || P.docs.length || P.stock.length || P.assets.length || P.advs.length)) E.unshift({s:'Read me', r:'', m:'Enter the "Balances as at" date above: the last day of your old books. Opening balances, stock, advances, assets and unpaid documents are posted on that date.'});
@@ -5523,30 +5564,35 @@ function migApply(P){
     mk('JV', {first:true, ref:'MIG-ASSETS-' + d, memo:`Fixed assets brought in as at ${dLong(d)}`, items}); }
   if(P.users.length){ const first = !DB.users.length; for(const {_pin, ...u} of P.users){ u.pin = hashPin(u.id, _pin); DB.users.push(u); }
     if(first){ const o = DB.users.find(u => u.role === 'owner' && u.active !== false); if(o){ SESSION_USER = o.id; try{ sessionStorage.setItem('mq_uid', o.id); localStorage.setItem('mq_user', o.name); }catch(x){} } } }
+  let nUpd = 0; if(P.doUpdate !== false) for(const u of P.updates){ const {_pin, ...c} = u.changes; Object.assign(u.target, c); if(_pin) u.target.pin = hashPin(u.target.id, _pin); nUpd++; }
+  P.nUpd = nUpd;
   for(const j of P.jvs) mk('JV', {date:j.date, ref:'MIG-' + j.no, memo:j.memo || 'Imported entry ' + j.no, items:j.items});
   const parts = [[P.accounts.length, 'account', 'accounts'], [P.contacts.filter(c => c.kind === 'customer').length, 'customer', 'customers'], [P.contacts.filter(c => c.kind === 'supplier').length, 'supplier', 'suppliers'], [P.docs.length, 'unpaid document', 'unpaid documents'], [P.products.length, 'stock item', 'stock items'], [P.emps.length, 'employee', 'employees'], [P.assets.length, 'fixed asset', 'fixed assets'], [P.jvs.length, 'past entry', 'past entries'], [P.users.length, 'user', 'users']].filter(x => x[0]).map(x => x[0] + ' ' + (x[0] === 1 ? x[1] : x[2]));
+  if(nUpd) parts.push(nUpd + ' updated');
   audit('Imported', null, 'Import template: ' + (parts.join(', ') || 'nothing new') + (P.open.length ? `, opening balances of ${P.open.length} accounts` : '') + (P.stock.length ? ', opening stock' : ''));
   return parts;
 }
 
 /* ---------- screens ---------- */
 function migPreview(P){
-  const S = (k, add) => { const s = P.skip[k] || 0; if(!MIG_IN.rows[k].length) return ''; return `<tr><td>${MIG[k].sheet}</td><td class="r num">${MIG_IN.rows[k].length}</td><td class="r num">${add}</td><td class="r num">${s || '–'}</td></tr>`; };
+  const S = (k, add) => { const s = P.skip[k] || 0; if(!MIG_IN.rows[k].length) return ''; return `<tr><td>${MIG[k].sheet}</td><td class="r num">${MIG_IN.rows[k].length}</td><td class="r num">${add}</td><td class="r num">${P.upd[k] || '–'}</td><td class="r num">${s || '–'}</td></tr>`; };
   const docsOf = T => P.docs.filter(x => T.includes(x.type)).length, ok = !P.errors.length;
   const list = (A, cls) => `<div class="tbl-wrap" style="max-height:220px;overflow:auto"><table class="small"><tbody>${A.slice(0, 80).map(e => `<tr><td class="mini" style="white-space:nowrap">${esc(e.s)}${e.r ? ' row ' + e.r : ''}</td><td class="${cls}">${esc(e.m)}</td></tr>`).join('')}${A.length > 80 ? `<tr><td></td><td class="mut">…and ${A.length - 80} more</td></tr>` : ''}</tbody></table></div>`;
   return `<div class="dlg"><h2>Import ${esc(MIG_IN.name)}</h2>
     <p>${ok ? 'The file is ready. Nothing has been changed yet.' : `<b class="out">${P.errors.length} problem${P.errors.length > 1 ? 's' : ''} to fix in the file first.</b> Correct them in Excel, save, and choose the file again.`}</p>
-    <div class="grid3">${fld('Balances as at (last day of your old books)', `<input type="date" id="migAsOf" value="${esc(P.asOf)}">`)}<div class="field"><label>&nbsp;</label><button class="btn ghost" data-act="migRecheck">Check again with this date</button></div></div>
+    ${MIG_DATED.some(k => MIG_IN.rows[k].length) || P.asOf ? `<div class="grid3">${fld('Balances as at (last day of your old books)', `<input type="date" id="migAsOf" value="${esc(P.asOf)}">`)}<div class="field"><label>&nbsp;</label><button class="btn ghost" data-act="migRecheck">Check again with this date</button></div></div>` : ''}
     ${P.errors.length ? `<h4>Problems</h4>${list(P.errors, 'out')}` : ''}${P.warnings.length ? `<h4>Please note</h4>${list(P.warnings, '')}` : ''}
-    <table class="small" style="margin-top:10px"><thead><tr><th>Sheet</th><th class="r">Rows</th><th class="r">To add</th><th class="r">Already here</th></tr></thead><tbody>
+    <table class="small" style="margin-top:10px"><thead><tr><th>Sheet</th><th class="r">Rows</th><th class="r">To add</th><th class="r">To update</th><th class="r">Unchanged</th></tr></thead><tbody>
       ${S('accounts', P.accounts.length + (P.open.length ? ` new · ${P.open.length} opening balances` : ''))}${S('customers', P.contacts.filter(c => c.kind === 'customer').length)}${S('suppliers', P.contacts.filter(c => c.kind === 'supplier').length)}
       ${S('invoices', docsOf(['INV','CN']))}${S('bills', docsOf(['BILL','DN']))}${S('stock', P.products.length + (P.stock.length ? ` · ${P.stock.length} stock lines` : ''))}
-      ${S('employees', P.emps.length + (P.advs.length ? ` · ${P.advs.length} advance${P.advs.length > 1 ? 's' : ''}` : ''))}${S('assets', P.assets.length)}${S('journal', P.jvs.length + ' entries')}${S('users', P.users.length)}${Object.values(MIG_IN.rows).some(x => x.length) ? '' : '<tr><td colspan="4" class="mut">No rows found. Fill the sheet below the headings, then import again.</td></tr>'}</tbody></table>
+      ${S('employees', P.emps.length + (P.advs.length ? ` · ${P.advs.length} advance${P.advs.length > 1 ? 's' : ''}` : ''))}${S('assets', P.assets.length)}${S('journal', P.jvs.length + ' entries')}${S('users', P.users.length)}${Object.values(MIG_IN.rows).some(x => x.length) ? '' : '<tr><td colspan="5" class="mut">No rows found. Fill the sheet below the headings, then import again.</td></tr>'}</tbody></table>
     ${P.asOf && (P.open.length || P.docs.length || P.stock.length || P.assets.length || P.advs.length) ? `<h4>Opening balances on ${dLong(P.asOf)}</h4><table class="small"><tbody>
       <tr><td>Accounts sheet</td><td class="r num">Dr ${fmt(P.drAcc)}</td><td class="r num">Cr ${fmt(P.crAcc)}</td></tr>
       <tr><td>Customers owe (unpaid invoices)</td><td class="r num">${fmt(P.ar)}</td><td></td></tr><tr><td>You owe suppliers (unpaid bills)</td><td></td><td class="r num">${fmt(P.ap)}</td></tr>
       <tr><td>Stock value</td><td class="r num">${fmt(P.stockVal)}</td><td></td></tr><tr><td>Fixed assets, book value</td><td class="r num">${fmt(P.faNbv)}</td><td></td></tr><tr><td>Staff advances</td><td class="r num">${fmt(P.advTot)}</td><td></td></tr>
       <tr><td><b>Difference</b></td><td colspan="2" class="r"><b class="${Math.abs(P.diff) > 0.005 ? 'out' : 'in'}">${Math.abs(P.diff) > 0.005 ? fmt(P.diff) + ' to Opening balance equity' : 'Balanced'}</b></td></tr></tbody></table>` : ''}
+    ${P.updates.length ? `<h4>Changes to existing records</h4><label style="display:flex;gap:8px;align-items:center;margin:4px 0 8px"><input type="checkbox" class="chk" id="migUpd" ${P.doUpdate === false ? '' : 'checked'}> Update ${P.updates.length} existing record${P.updates.length > 1 ? 's' : ''} with the values in the file (empty cells keep the current value)</label>
+      ${list(P.updates.map(u => ({s:MIG[u.k].sheet, r:u.r, m:u.label + ': ' + u.names.join(', ')})), '')}` : ''}
     <p class="help">Download a backup first (Settings → Data folder). Importing the same file again later adds only what is new.</p>
     <div class="dlg-foot" style="margin-top:14px"><button class="btn ghost" data-act="close">Cancel</button><button class="btn" data-act="migGo" ${ok ? '' : 'disabled'}>Import</button></div></div>`;
 }
@@ -5558,7 +5604,8 @@ function migSettings(){
     ['Past entries','Optional: journal entries after the balances date, if you start the new books a little late.']];
   return `<div class="set-grid"><section class="panel"><div class="panel-head"><div><h2>Move your existing books in</h2><p>Bring balances and records from Excel, Tally, QuickBooks or any other system in one go.</p></div></div>
       <ol class="help" style="line-height:1.8;margin:0 0 12px 18px;padding:0"><li>Download the template and open it in Excel.</li><li>On the <b>Read me</b> sheet enter the <b>Balances as at</b> date: the last day of your old books (for example 30/09/2026).</li><li>Fill the sheets you need, leave the others empty. Rows starting with "e.g." are examples and are skipped.</li><li>Choose the filled file here. The app checks every row and shows what will be added before anything changes.</li></ol>
-      <div class="row-btns"><button class="btn ghost" data-act="migTpl">${ic('down',15)}Download template</button><button class="btn" data-act="migPick">Choose filled template</button></div></section>
+      <div class="row-btns"><button class="btn ghost" data-act="migTpl">${ic('down',15)}Blank template</button><button class="btn ghost" data-act="migExportAll">${ic('down',15)}Export all current data</button><button class="btn" data-act="migPick">Choose filled template</button></div>
+      <p class="help" style="margin-top:10px">To change existing records in bulk, export all current data (same sheets and columns), edit it in Excel and import it again. Each list page also has its own Import button with a template and an export.</p></section>
     <section class="panel"><div class="panel-head"><div><h2>What goes where</h2></div></div><table class="small"><tbody>${rows.map(([a, b]) => `<tr><td><b>${a}</b></td><td>${b}</td></tr>`).join('')}</tbody></table>
       <p class="help" style="margin-top:10px">Customer, supplier, stock, asset and advance balances come from their own sheets, one line per document, so leave those control accounts empty on the Accounts sheet. Everything is posted on the balances date against Opening balance equity (3050); when the books balance, that account ends at zero.</p></section></div>`;
 }
@@ -5569,10 +5616,11 @@ Object.assign(ACT, {
     i.onchange = async () => { const f = i.files[0]; if(!f) return; try{ const wb = XLSX.read(await f.arrayBuffer(), {type:'array'}); MIG_IN = migRead(wb); MIG_IN.name = f.name;
       if(!MIG_IN.sheets) return toast('This is not the import template: none of its sheets were found.');
       MIG_IN.plan = migCheck(MIG_IN, MIG_IN.asOf); openDlg(migPreview(MIG_IN.plan), 'wide'); }catch(e){ toast('Could not read the file: ' + e.message); } }; i.click(); },
-  migRecheck: () => { if(!MIG_IN) return; const d = $('#migAsOf')?.value || ''; MIG_IN.plan = migCheck(MIG_IN, d); openDlg(migPreview(MIG_IN.plan), 'wide'); },
-  migGo: () => { if(!guardWrite() || !MIG_IN?.plan || MIG_IN.plan.errors.length) return; const d = $('#migAsOf')?.value || '';
-    if(d !== MIG_IN.plan.asOf){ MIG_IN.plan = migCheck(MIG_IN, d); if(MIG_IN.plan.errors.length) return openDlg(migPreview(MIG_IN.plan), 'wide'); }
-    const parts = migApply(MIG_IN.plan); MIG_IN = null; closeDlg(); commit(parts.length ? 'Imported ' + parts.join(', ') : 'Opening balances imported'); }
+  migRecheck: () => { if(!MIG_IN) return; const d = $('#migAsOf')?.value || '', up = $('#migUpd') ? $('#migUpd').checked : true; MIG_IN.plan = migCheck(MIG_IN, d); MIG_IN.plan.doUpdate = up; openDlg(migPreview(MIG_IN.plan), 'wide'); },
+  migGo: () => { if(!guardWrite() || !MIG_IN?.plan || MIG_IN.plan.errors.length) return; const d = $('#migAsOf') ? $('#migAsOf').value : MIG_IN.plan.asOf;
+    if(d !== MIG_IN.plan.asOf){ const up = $('#migUpd') ? $('#migUpd').checked : true; MIG_IN.plan = migCheck(MIG_IN, d); MIG_IN.plan.doUpdate = up; if(MIG_IN.plan.errors.length) return openDlg(migPreview(MIG_IN.plan), 'wide'); }
+    MIG_IN.plan.doUpdate = $('#migUpd') ? $('#migUpd').checked : true;
+    const parts = migApply(MIG_IN.plan); MIG_IN = null; closeDlg(); commit(parts.length ? 'Imported: ' + parts.join(', ') : 'Nothing new to import'); }
 });
 
 /* ---------- one template per list, made in the app ---------- */
@@ -5603,11 +5651,12 @@ const MIG_PAGE = {'Customers':'customers', 'Suppliers':'suppliers', 'Sales invoi
 const MIG_DATED = ['accounts','invoices','bills','stock','employees','assets'];
 const MIG_LABEL = {accounts:'accounts and opening balances', customers:'customers', suppliers:'suppliers', invoices:'unpaid customer invoices', bills:'unpaid supplier bills', stock:'stock items and opening stock', employees:'employees', assets:'fixed assets', users:'users', journal:'past entries'};
 function migCanImport(k){ const r = role(); return k === 'users' ? r === 'owner' : k === 'employees' ? ['owner','accountant','hr'].includes(r) : ['owner','accountant'].includes(r); }
-function migListWB(k, heads){
+function migListWB(k, heads, exp){
   const spec = MIG[k], wb = XLSX.utils.book_new(), byH = Object.fromEntries(Object.entries(spec.cols).map(([key, h]) => [migNorm(h), key])), H0 = MIG_HINT[k] || {}, dated = MIG_DATED.includes(k);
   const cols = (heads && heads.length ? heads : Object.values(spec.cols)).map(h => [byH[migNorm(h)] || '', h]), H = Object.fromEntries(cols.map(([key]) => [key, H0[key] || ''])), exRow = (MIG_EX[k] || []).map(r => { const m = Object.fromEntries(Object.keys(spec.cols).map((key, i) => [key, r[i]])); return cols.map(([key]) => m[key] ?? ''); });
   const yel = {fill:{fgColor:{rgb:'FFF2A8'}}, font:{bold:true}, numFmt:'dd/mm/yyyy', border:{top:thin, bottom:thin, left:thin, right:thin}};
-  const rm = [[{v:`${DB.settings.biz} – import ${MIG_LABEL[k]}`, s:ST.title}], [{v:'Fill the "' + spec.sheet + '" sheet, save, then in the app click Import → Choose filled file.', s:ST.sub}],
+  const rm = [[{v:`${DB.settings.biz} – ${exp ? 'export of' : 'import'} ${MIG_LABEL[k]}${exp ? ', ' + dLong(todayISO()) : ''}`, s:ST.title}],
+    [{v:exp ? `This is your current data. Change cells or add new rows on the "${spec.sheet}" sheet, save, then in the app click Import → Choose filled file. Rows are matched by the ID (system) column, so names can be changed too; empty cells keep the current value.` : 'Fill the "' + spec.sheet + '" sheet, save, then in the app click Import → Choose filled file.', s:ST.sub}],
     [{v:k === 'journal' ? 'Imported entries are saved in ' + MAIN_XLSX + ' in your data folder.' : `The columns are the same as the "${spec.sheet}" sheet of ${MAIN_XLSX} in your data folder, where the imported rows are saved.`, s:ST.sub}], ['']];
   if(dated) rm.push([{v:'Balances as at', s:{font:{bold:true}}}, {t:'s', v:'', s:yel}, {v:'← the last day of your old books, e.g. 30/09/2026 (you can also enter it in the app)', s:ST.sub}], ['']);
   rm.push(['Rows whose first cell starts with "e.g." are examples and are skipped. Do not rename the sheet or the column headings.'], ['Columns marked * are required. Enter dates as dd/mm/yyyy and amounts as plain numbers in AED.'], ['Importing the same file again adds only what is new.'], ['']);
@@ -5624,7 +5673,7 @@ function migListWB(k, heads){
   else rows = exRow.map(r => r.map(v => v === '' ? '' : ({t: typeof v === 'number' ? 'n' : 's', v, s:exS})));
   const widths = cols.map(([, h]) => Math.max(11, Math.min(34, h.length + 4)));
   if(k === 'accounts') widths.push(40);
-  addSheet(wb, spec.sheet, [head, ...rows], widths, {header:false});
+  if(exp) mainListSheets(wb, k); else addSheet(wb, spec.sheet, [head, ...rows], widths, {header:false});
   return wb;
 }
 function migListDlg(k){
@@ -5634,7 +5683,8 @@ function migListDlg(k){
       <li>Fill one row per ${({accounts:'account', customers:'customer', suppliers:'supplier', invoices:'unpaid invoice', bills:'unpaid bill', stock:'item (or item and location)', employees:'employee', assets:'asset', users:'user'})[k]}${dated ? ', and enter the Balances as at date on the Read me sheet' : ''}.</li>
       <li>Choose the filled file. You see what will be added before anything changes. It is then saved with everything else, including ${MAIN_XLSX} in your data folder.</li></ol>
     ${k === 'users' ? '<p class="help">The file holds PINs: delete it after importing.</p>' : ''}
-    <div class="dlg-foot"><button class="btn ghost" data-act="close">Cancel</button><button class="btn ghost" data-act="listTpl" data-k="${k}">${ic('down',15)}Download template</button><button class="btn" data-act="migPick">Choose filled file</button></div></div>`;
+    <p class="help">To change existing ${MIG_LABEL[k]}: <b>Export current data</b>, edit the rows in Excel, then choose the file here. Only filled cells that differ are changed${k === 'invoices' || k === 'bills' ? '; posted documents themselves are not changed, only new ones are added' : k === 'assets' ? '; cost, date and depreciation stay as posted' : ''}.</p>
+    <div class="dlg-foot"><button class="btn ghost" data-act="close">Cancel</button><button class="btn ghost" data-act="listTpl" data-k="${k}">${ic('down',15)}Blank template</button><button class="btn ghost" data-act="listExp" data-k="${k}">${ic('down',15)}Export current data</button><button class="btn" data-act="migPick">Choose filled file</button></div></div>`;
 }
 const _migHeader = header;
 header = function(title, sub, opts = {}){ const k = MIG_PAGE[title];
@@ -5644,6 +5694,13 @@ const _migUsers = usersSettings;
 usersSettings = function(){ return _migUsers() + (role() === 'owner' ? `<section class="panel"><div class="panel-head"><div><h2>Import users from Excel</h2><p>Add several users with their role and PIN at once.</p></div><button class="btn ghost sm" data-act="listImp" data-k="users">${ic('down',14)}Import</button></div></section>` : ''); };
 Object.assign(ACT, {
   listImp: d => { if(!migCanImport(d.k)) return toast('Your role cannot import ' + MIG_LABEL[d.k] + '.'); openDlg(migListDlg(d.k), 'mid'); },
+  listExp: async d => { XLSX.writeFile(migListWB(d.k, await mainHeaders(d.k), true), `McQueen_${MIG[d.k].sheet.replace(/\s+/g, '_')}_${todayISO()}.xlsx`, {cellStyles:true}); },
+  migExportAll: () => { const wb = XLSX.utils.book_new(), yel = {fill:{fgColor:{rgb:'FFF2A8'}}, font:{bold:true}, border:{top:thin, bottom:thin, left:thin, right:thin}};
+    addSheet(wb, 'Read me', [[{v:`${DB.settings.biz} – all data, ${dLong(todayISO())}`, s:ST.title}], [{v:'Every sheet has the same columns as the import template and as ' + MAIN_XLSX + '. Change cells or add rows on any sheet, save, then Settings → Import data → Choose filled template.', s:ST.sub}], [''],
+      [{v:'Balances as at', s:{font:{bold:true}}}, {t:'s', v:'', s:yel}, {v:'Only needed when you add opening balances, stock quantities, advances, assets or unpaid documents.', s:ST.sub}], [''],
+      ['Rows are matched by the ID (system) column (or the name / code). Only filled cells that differ are changed; empty cells keep the current value.'], ['Columns ending in (system) are filled by the app and are not imported.'], ['Posted amounts (unpaid documents, asset cost, balances) are not changed by an import; new rows are added.']], [26, 22, 90], {header:false});
+    mainListSheets(wb); addSheet(wb, MIG.journal.sheet, [Object.values(MIG.journal.cols)], Object.values(MIG.journal.cols).map(h => Math.max(11, h.length + 4)));
+    XLSX.writeFile(wb, `McQueen_All_Data_${todayISO()}.xlsx`, {cellStyles:true}); },
   listTpl: async d => { XLSX.writeFile(migListWB(d.k, await mainHeaders(d.k)), `McQueen_Import_${MIG[d.k].sheet.replace(/\s+/g, '_')}.xlsx`, {cellStyles:true}); }
 });
 
